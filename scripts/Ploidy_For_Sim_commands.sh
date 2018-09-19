@@ -1,0 +1,52 @@
+cd ~/Documents/Research/PloidySim/
+
+#echo -e "rep\tploidy\tstartfreq\tN\ts\tdom\tgen\tNgen\tfreq" > Ploidy_Forward_Sim_results.txt
+
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 100 -s 0.1 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000 -s 0.1 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 10000 -s 0.1 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000000 -s 0.1 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 100 -s 0.01 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 1000 -s 0.01 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 10000 -s 0.01 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 1000000 -s 0.01 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 100 -s 0.01 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000 -s 0.01 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 10000 -s 0.01 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000000 -s 0.01 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000000 -s 0.01 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000000 -s 0.01 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 100 -s 0.1 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 100 -s 0.1 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000 -s 0.1 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000 -s 0.1 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 10000 -s 0.1 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 10000 -s 0.1 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000000 -s 0.1 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000000 -s 0.1 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 100 -s 0.01 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 100 -s 0.01 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 1000 -s 0.01 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 1000 -s 0.01 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 10000 -s 0.01 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 10000 -s 0.01 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 1000000 -s 0.01 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 2 -f 0.05 -N 1000000 -s 0.01 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 100 -s 0.01 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 100 -s 0.01 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000 -s 0.01 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000 -s 0.01 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 10000 -s 0.01 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 10000 -s 0.01 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 100 -s 0.001 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 100 -s 0.001 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 100 -s 0.001 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000 -s 0.001 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000 -s 0.001 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000 -s 0.001 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 10000 -s 0.001 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 10000 -s 0.001 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 10000 -s 0.001 -d dominant >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000000 -s 0.001 -d additive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000000 -s 0.001 -d recessive >> Ploidy_Forward_Sim_results.txt
+python3 Ploidy_Forward_Sim.py -r 10 -p 4 -f 0.05 -N 1000000 -s 0.001 -d dominant >> Ploidy_Forward_Sim_results.txt

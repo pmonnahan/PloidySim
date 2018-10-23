@@ -4,6 +4,42 @@ import os
 import argparse
 import subprocess
 from math import ceil
+import pdb
+
+def writeTraj(df, filename, Ne, npop, ntraj=1):
+	
+	with open(filename,'w') as traj_File:
+		traj_File.write(f"ntraj: {ntraj}\n")
+		traj_File.write(f"npop: {npop}\n")
+
+		# print("Running: ploidy = 2, s = " + str(s) + ", N = " + str(N) + ", Dominance = " + str(dom.strip()) + ", Rep = " + str(rep))
+		# Sorting was done wrong in original simulation.  Need to sort frequency but leave generations in place
+		df1=df["freq"]
+		df1=df1.sort_values(ascending=False)
+		df1 = pd.concat([df["gen"].reset_index(drop=True), df1.reset_index(drop=True)], axis=1)
+		df1['gen'] = df1['gen'].astype(float)
+		df1.gen /= float(Ne)
+		maxGen = df1['gen'].max()
+		df1=df1.loc[(df1.freq.diff() < 0.15),] #any row that differs from previous row by more than 0.15 is likely an error...noticed several odd data points when visualizing data in R.
+		if len(df1.loc[(df1.freq.diff() > 0.15),].index) > 3: # Should not find more than a couple artifactual data points
+			df1['dif']= df1.freq.diff()
+			print(df1)
+		traj_File.write(f"n: {len(df1.index) + 1}\t{filename}\n")
+		traj_File.write(df1.to_string(index=False,header=None) + "\n")
+		traj_File.write(f"{maxGen + 0.000000001}  0  0")
+	return(maxGen)
+
+def makeFileNames(outdir, p, s, Ne, dom, rep):
+	traj_file = f"{outdir}mssel_input/traj_p{p}_s{s}_N{N}_{dom.strip()}_rep{rep}.txt"
+	outfile = f"{outdir}mssel_output/mssel_out_p{p}_s{s}_N{N}_{dom.strip()}_rep{rep}.txt"
+	sumout = f"{outdir}mssel_output/mssel_out_p{p}_s{s}_N{N}_{dom.strip()}_rep{rep}.smry.txt"
+	return([traj_file, outfile, sumout])
+
+def make2popCmds(mssel_path, n_anc, n_der, p, num_reps, traj_file, selection_spot, rho, n_sites, theta, fuseTime, ms_out, Rscript_path, Rout, num_wind, slide_rate):
+	msCmd = f"{mssel_path} { (n_anc + n_der) * p } {num_reps} {n_anc * p} {n_der * p} {traj_file} {selection_spot} -r {rho} {n_sites} -t {theta} -I 2 0 {n_der * p} {n_anc * p} 0 -ej {fuseTime} 2 1 > {ms_out}"
+	rCmd = f"{Rscript_path} {ms_out} {Rout.replace('.txt', '.tmp.txt')} {n_sites} {num_wind} {slide_rate} 2 1 {n_anc * p} {n_der * p}"
+	awkCmd = f"awk '{{printf \" {p} {rep} {s} {N} {dom} {n_sites} {theta} {rho} {Ne} %s {n_anc} {n_der} \\n\", $0}}\' {Rout.replace('.txt', '.tmp.txt')} > {Rout}"
+	return([msCmd, rCmd, awkCmd])
 
 # Specify arguments to be read from the command line
 parser = argparse.ArgumentParser(description='This script will take a trajectory file produced from Ploidy_Forward_Sim.py, run mssel, and parse the output')
@@ -19,8 +55,9 @@ parser.add_argument('-T', type=float, metavar='Theta', default=-9.0, required=Fa
 parser.add_argument('-R', type=float, metavar='Rho', default=-9.0, required=False, help='If provided, this will override calculation of rho from pop size under simulation')
 parser.add_argument('-na', type=int, metavar='n_ancestral', default=10, required=False, help='number of individuals possessing the ancestral (i.e non-sweep) allele')
 parser.add_argument('-nd', type=int, metavar='n_derived', default=10, required=False, help='number of individuals possessing the derived (i.e. sweep) allele')
-parser.add_argument('-w', type=str, metavar='window_size', default="50", required=False, help='window size in number of snps for ms_summarize.R')
+parser.add_argument('-w', type=str, metavar='number_of_windows', default="200", required=False, help='number of windows to be used in ms_summarize.R')
 parser.add_argument('-W', type=str, metavar='window_slide_rate', default="0.5", required=False, help='Proportion of winSize that we want to slide the window')
+parser.add_argument('-Ne', type=int, metavar='effective_pop_size', default=-9, required=False, help='use a single value of Ne instead of using the N under which sweeps were simulated')
 args = parser.parse_args()
 
 args.o += "/"
@@ -28,14 +65,21 @@ if os.path.exists(args.o) is False: os.mkdir(args.o)
 if os.path.exists(args.o + "mssel_input") is False: os.mkdir(args.o + "mssel_input")
 if os.path.exists(args.o + "mssel_output") is False: os.mkdir(args.o + "mssel_output")
 
+outdir = args.o
+mssel_path = args.ms
+Rscript_path = args.X
 mu = args.mu
 r = args.r
 num_reps = args.reps
+num_wind = args.w
+slide_rate = args.W
 n_anc = args.na # number of alleles sampled from ancestral population
 n_der = args.nd # number of alleles sampled from selected population
 n_sites = args.L #number of sites
 selection_spot = ceil(n_sites * 0.5)
 segsites=1000
+npop = 2
+GPSS = 100 #Generations prior to start of selection
 
 #Is Pandas the way to go on this? Takes a long time to read data into memory
 TRAJ = pd.read_csv(args.t, header=0, dtype={'rep': object, 'ploidy': float, 'start': float, 'N': float, 's': float, 'dom': object, 'gen': float, 'Ngen': float, 'freq': float})
@@ -43,74 +87,39 @@ TRAJ = pd.read_csv(args.t, header=0, dtype={'rep': object, 'ploidy': float, 'sta
 # Loop over
 jobList=[] 
 for idx, df in TRAJ.groupby(['ploidy', 's', 'N', 'dom', 'rep']):
+
 	p = int(df['ploidy'].iloc[0])
+	if p == 2:
+		alt_fact = 2
+	else:
+		alt_fact = 0.5
+
 	s = float(df['s'].iloc[0])
 	N = int(df['N'].iloc[0])
 	dom = str(df['dom'].iloc[0])
 	rep = str(df['rep'].iloc[0])
 
-	traj_file = f"{args.o}mssel_input/traj_p{p}_s{s}_N{N}_{dom.strip()}_rep{rep}.txt"
-	traj_File=open(traj_file,'w')
-	traj_File.write("ntraj: 1\n")
-	traj_File.write("npop: 1\n")
-	
-	outfile = f"{args.o}mssel_output/mssel_out_p{p}_s{s}_N{N}_{dom.strip()}_rep{rep}.txt"
-	sumout = f"{args.o}mssel_output/mssel_out_p{p}_s{s}_N{N}_{dom.strip()}_rep{rep}.smry.txt"
-	print("Running: ploidy = 2, s = " + str(s) + ", N = " + str(N) + ", Dominance = " + str(dom.strip()) + ", Rep = " + str(rep))
-	df1=df.loc[df.rep == rep,("Ngen","freq")]
-	df1['Ngen'] = df1['Ngen'].astype(float)
-	df1=df1.sort_values(by=["Ngen"])
-	df1=df1.loc[(df1.freq.diff() < 0.15),] #any row that differs from previous row by more than 0.15 is likely an error...noticed several odd data points when visualizing data in R.
-	if len(df1.loc[(df1.freq.diff() > 0.15),].index) > 3: # Should not find more than a couple artifactual data points
-		df1['dif']= df1.freq.diff()
-		print(df1)
-	traj_File.write(f"n: {len(df1.index)}\trep{rep}\n")
-	traj_File.write(df1.to_string(index=False,header=None) + "\n")
-
+	if args.Ne == -9: Ne = N
+	else: Ne = args.Ne
 	if args.T != -9.0:
 		theta = args.T
-		n_sites = ceil(theta / (2 * mu * p * N))
+		# n_sites = ceil(theta / (2 * mu * p * Ne))
+		n_sites = ceil(theta / (2 * mu * Ne))
 		selection_spot = ceil(n_sites * 0.5)
-	else:
-		theta = 2 * p * N * mu * n_sites
-	if args.R != -9.0:
-		rho = args.R
-	else:
-		rho = 2 * p * N * r * n_sites
+	else: theta = ceil(2 * p * Ne * mu * n_sites)
+	if args.R != -9.0: rho = args.R
+	else: rho = ceil(2 * p * Ne * r * n_sites)
 
-	msCmd = f"{args.ms} { (n_anc + n_der) * p } {num_reps} {n_anc * p} {n_der * p} {traj_file} {selection_spot} -r {rho} {n_sites} -t {theta}  > {outfile}; "
-	rCmd = f"{args.X} {outfile} {sumout.replace('.txt', '.tmp.txt')} {n_sites} {args.w} {args.W} 2 1 {n_anc} {n_der}; "
-	awkCmd = f"awk '{{printf \" {p} {rep} {s} {N} {dom} %s {n_anc} {n_der} \\n\", $0}}\' {sumout.replace('.txt', '.tmp.txt')} > {sumout}"
-	
-	print(msCmd + rCmd + awkCmd)
-				# pp = subprocess.Popen(cmd,shell = True)
+	files = makeFileNames(outdir, p, s, Ne, dom, rep)
+	maxGen = writeTraj(df, files[0], Ne * p, npop)
+	fuseTime = maxGen + (GPSS / (Ne * p))
+	cmds = makeCmds(mssel_path, n_anc, n_der, p, num_reps, files[0], selection_spot, rho, n_sites, theta, fuseTime, files[1], Rscript_path, files[2], num_wind, slide_rate)
 
-# for s in tetTraj.s.unique():
-# 	for N in tetTraj.N.unique():
-# 		for dom in tetTraj.dom.unique():
-# 			df=tetTraj.loc[(tetTraj.s == s) & (tetTraj.N == N) & (tetTraj.dom == dom),]
-# 			for rep in df.rep.unique():
-# 				traj_file = args.o + "mssel_input/traj_p4_s" + str(s) + "_N" + str(N) + "_" + dom.strip() + "_rep" + str(rep) + ".txt "
-# 				traj_File=open(traj_file,'w')
-# 				traj_File.write("ntraj: " + str(len(traj.rep.unique()) - 1) + "\n")
-# 				traj_File.write("npop: 1\n")
-				
-# 				outfile = args.o + "mssel_output/mssel_out_p4_s" + str(s) + "_N" + str(N) + "_" + dom.strip() + "_rep" + str(rep) + ".txt"
-# 				# print("Running: ploidy = 2, s = " + str(s) + ", N = " + str(N) + ", Dominance = " + str(dom.strip()) + ", Rep = " + str(rep))
-# 				df1=df.loc[df.rep == rep,("Ngen","freq")]
-# 				df1['Ngen'] = df1['Ngen'].astype(float)
-# 				df1=df1.sort_values(by=["Ngen"])
-# 				df1=df1.loc[(df1.freq.diff() < 0.15),] #any row that differs from previous row by more than 0.15 is likely an error...noticed several odd data points when visualizing data in R.
-# 				if len(df1.loc[(df1.freq.diff() > 0.15),].index) > 3: # Should not find more than a couple artifactual data points
-# 					df1['dif']= df1.freq.diff()
-# 					print(df1)
-# 				traj_File.write("n: " + str(len(df1.index)) + "\trep" + str(rep) + "\n")
-# 				traj_File.write(df1.to_string(index=False,header=None) + "\n")
+	print(";".join(cmds))
 
-# 				theta = 8 * N * mu * n_sites
-# 				rho = 8 * N * r * n_sites
+	files = makeFileNames(outdir, p, s, Ne, dom, f"{rep}Alt")
+	maxGen = writeTraj(df, files[0], Ne * p * alt_fact, npop)
+	fuseTime = maxGen + (GPSS / (Ne * p * alt_fact))
+	cmds = makeCmds(mssel_path, n_anc * alt_fact, n_der * alt_fact, int(p * alt_fact), num_reps, files[0], selection_spot, rho * alt_fact, n_sites, theta * alt_fact, fuseTime, files[1], Rscript_path, files[2], num_wind, slide_rate)
 
-# 				# To end of cmd, add && R analysis to summarise the data
-# 				cmd = args.ms + ' ' + str((n_anc * 4) + (n_der * 4)) + ' ' + str(num_reps) + ' ' + str(n_anc * 4) + ' ' + str(n_der * 4) + ' ' + traj_file + str(selection_spot) + ' -r ' + str(rho) + ' ' + str(n_sites) + ' -s ' + str(segsites) + " > " + outfile
-# 				print(cmd)
-# 				# pp = subprocess.Popen(cmd,shell = True)
+	print(";".join(cmds))

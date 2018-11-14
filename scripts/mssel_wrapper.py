@@ -36,9 +36,9 @@ def makeFileNames(outdir, p, s, Ne, dom, rep):
 	return([traj_file, outfile, sumout])
 
 def make2popCmds(mssel_path, n_anc, n_der, p, num_reps, traj_file, selection_spot, rho, n_sites, theta, fuseTime, ms_out, Rscript_path, Rout, num_wind, slide_rate):
-	msCmd = f"{mssel_path} { (n_anc + n_der) * p } {num_reps} {n_anc * p} {n_der * p} {traj_file} {selection_spot} -r {rho} {n_sites} -t {theta} -I 2 0 {n_der * p} {n_anc * p} 0 -ej {fuseTime} 2 1 > {ms_out}"
+	msCmd = f"{mssel_path} { (n_anc + n_der) * p } {num_reps} {n_anc * p} {n_der * p} {traj_file} {selection_spot} -r {rho * p} {n_sites} -t {theta * p} -I 2 0 {n_der * p} {n_anc * p} 0 -ej {fuseTime} 2 1 > {ms_out}"
 	rCmd = f"{Rscript_path} {ms_out} {Rout.replace('.txt', '.tmp.txt')} {n_sites} {num_wind} {slide_rate} 2 1 {n_anc * p} {n_der * p}"
-	awkCmd = f"awk '{{printf \" {p} {rep} {s} {N} {dom} {n_sites} {theta} {rho} {Ne} %s {n_anc} {n_der} \\n\", $0}}\' {Rout.replace('.txt', '.tmp.txt')} > {Rout}"
+	awkCmd = f"awk '{{printf \" {p} {rep} {s} {N} {dom} {n_sites} {theta * p} {rho * p} {Ne} %s {n_anc} {n_der} \\n\", $0}}\' {Rout.replace('.txt', '.tmp.txt')} > {Rout}"
 	return([msCmd, rCmd, awkCmd])
 
 # Specify arguments to be read from the command line
@@ -47,7 +47,7 @@ parser.add_argument('-t', type=str, metavar='trajectory_file', required=True, he
 parser.add_argument('-o', type=str, metavar='output_directory', required=True, help='Full path to output directory.')
 parser.add_argument('-ms', type=str, metavar='mssel_path', default="/Users/pmonnahan/Documents/Research/code/dmc/mssel_modified/mssel", required=False, help='Full path to mssel executable')
 parser.add_argument('-X', type=str, metavar='summary_script', default="/Users/pmonnahan/Documents/Research/PloidySim/scripts/ms_summarize.R", required=False, help='Path to ms_summarize.R')
-parser.add_argument('-reps', type=str, metavar='number_of_reps', default="1", required=False, help='Number of mssel reps for a single trajectory')
+parser.add_argument('-reps', type=int, metavar='number_of_reps', default="1", required=False, help='Number of mssel reps for a single trajectory')
 parser.add_argument('-mu', type=float, metavar='mutation_rate', default="0.000000015", required=False, help='specified as decimal.')
 parser.add_argument('-r', type=float, metavar='recombination_rate', default="0.000000015", required=False, help='specified as decimal.')
 parser.add_argument('-L', type=int, metavar='sequence_length', default="200000", required=False, help='Total number of sites')
@@ -106,20 +106,29 @@ for idx, df in TRAJ.groupby(['ploidy', 's', 'N', 'dom', 'rep']):
 		# n_sites = ceil(theta / (2 * mu * p * Ne))
 		n_sites = ceil(theta / (2 * mu * Ne))
 		selection_spot = ceil(n_sites * 0.5)
-	else: theta = ceil(2 * p * Ne * mu * n_sites)
+	else: theta = ceil(2 * Ne * mu * n_sites)
 	if args.R != -9.0: rho = args.R
-	else: rho = ceil(2 * p * Ne * r * n_sites)
+	else: rho = ceil(2 * Ne * r * n_sites)
 
-	files = makeFileNames(outdir, p, s, Ne, dom, rep)
-	maxGen = writeTraj(df, files[0], Ne * p, npop)
-	fuseTime = maxGen + (GPSS / (Ne * p))
-	cmds = makeCmds(mssel_path, n_anc, n_der, p, num_reps, files[0], selection_spot, rho, n_sites, theta, fuseTime, files[1], Rscript_path, files[2], num_wind, slide_rate)
+	for dd in range(0, num_reps):
+		rep1 = f"{rep}-{dd}"
+		files = makeFileNames(outdir, p, s, Ne, dom, rep1)
+		maxGen = writeTraj(df, files[0], Ne * p, npop)
+		fuseTime = maxGen + (GPSS / (Ne * p))
 
-	print(";".join(cmds))
+		#Delete intermediate files
+		cmds = make2popCmds(mssel_path, n_anc, n_der, p, "1", files[0], selection_spot, rho, n_sites, theta, fuseTime, files[1], Rscript_path, files[2], num_wind, slide_rate)
+		
+		print(";".join(cmds))
 
-	files = makeFileNames(outdir, p, s, Ne, dom, f"{rep}Alt")
-	maxGen = writeTraj(df, files[0], Ne * p * alt_fact, npop)
-	fuseTime = maxGen + (GPSS / (Ne * p * alt_fact))
-	cmds = makeCmds(mssel_path, n_anc * alt_fact, n_der * alt_fact, int(p * alt_fact), num_reps, files[0], selection_spot, rho * alt_fact, n_sites, theta * alt_fact, fuseTime, files[1], Rscript_path, files[2], num_wind, slide_rate)
+	p *= alt_fact
 
-	print(";".join(cmds))
+	for dd in range(0, num_reps):
+		rep2 = f"{rep}-{dd}"
+		files = makeFileNames(outdir, p, s, Ne, dom, f"{rep2}Alt")
+		maxGen = writeTraj(df, files[0], Ne * p, npop)
+		fuseTime = maxGen + (GPSS / (Ne * p))
+
+		alt_cmds = make2popCmds(mssel_path, n_anc, n_der, p, "1", files[0], selection_spot, rho, n_sites, theta, fuseTime, files[1], Rscript_path, files[2], num_wind, slide_rate)
+
+		print(";".join(alt_cmds))

@@ -41,13 +41,23 @@ if (length(args)==0) {
   stop("At least one argument must be supplied (input file).n", call.=FALSE)
 } 
 
+in_file = args[1]
 out_file = args[2]
 Nsites = as.numeric(args[3])
-winSize = as.numeric(args[4])
+numWindows = as.numeric(args[4])
 slideRate = as.numeric(args[5])
 Npops = as.numeric(args[6])
 selPop = as.numeric(args[7])
 samp_sizes = as.numeric(c(args[8:length(args)]))
+
+in_file = "/Users/pmonnahan/Documents/Research/PloidySim/mssel_out_p2.0_s0.1_N1000000_additive_rep0Alt.txt"
+out_file = str_replace(in_file,"txt",".out")
+Nsites = 1000000
+numWindows = 20
+slideRate = 0.5
+Npops = 2
+selPop = 2
+samp_sizes = as.numeric(c(20,20))
 
 # Necessary Functions
 read.ms.output <- function( txt=NA, file.ms.output=NA,MSMS=FALSE) {
@@ -140,7 +150,8 @@ makePops <- function(sampSize_list){
   return(popList)
 }
 
-makePop.df=function(inp,Nsites,positions,selPop){
+## PROBLEM IS THAT EACH REP HAS A DIFFERENT NUMBER OF SITES.  USING ONE WINDOW SIZE RESULTS IN REPS WITH DIFFERENT NUMBER OF WINDOWS
+makePop.df=function(inp,Nsites,positions,selPop, numWindows){
   DF = data.frame()
   
   for (i in 1:length(inp@populations)){
@@ -148,18 +159,30 @@ makePop.df=function(inp,Nsites,positions,selPop){
     df$snp.start=as.numeric(str_split_fixed(rownames(df)," ",4)[,2])
     df$snp.end=as.numeric(str_split_fixed(str_split_fixed(rownames(df)," ",4)[,4]," ",2)[,1])
     df$rep=str_split_fixed(str_split_fixed(rownames(df),"_",3)[,3], "[.]",2)[,1]
-    
+
+    # df %<>% add_count(rep)
+    # df %>% mutate(winSize = round(length(positions[[1]]) / numWindows, digits = -1))
+    # 
+    # winSize = round(length(positions[[1]]) / numWindows, digits = -1)
+    # 
     df1=as.data.frame(get.linkage(inp)[[i]])
     df1$snp.start=as.numeric(str_split_fixed(rownames(df1)," ",4)[,2])
     df1$snp.end=as.numeric(str_split_fixed(str_split_fixed(rownames(df1)," ",4)[,4]," ",2)[,1])
     df1$rep=str_split_fixed(str_split_fixed(rownames(df1),"_",3)[,3], "[.]",2)[,1]
     df = merge(df,df1,by=c("rep","snp.start","snp.end"))
+    df3 = as.data.frame(get.neutrality(inp)[[i]])
+    df3$snp.start=as.numeric(str_split_fixed(rownames(df3)," ",4)[,2])
+    df3$snp.end=as.numeric(str_split_fixed(str_split_fixed(rownames(df3)," ",4)[,4]," ",2)[,1])
+    df3$rep=str_split_fixed(str_split_fixed(rownames(df3),"_",3)[,3], "[.]",2)[,1]
     
+    df = merge(df, df3[, c("rep","snp.start", "snp.end", "Tajima.D")], by = c("rep", "snp.start", "snp.end"))
     df$pop = as.character(i)
     DF=rbind(DF,df)
   }
   
-  DF=dcast(setDT(DF), rep + snp.start + snp.end ~ pop,value.var = c("nuc.diversity.within","Kelly.Z_nS"))
+  vars = c("rep","snp.start","snp.end","nuc.diversity.within","Kelly.Z_nS","Tajima.D","pop")
+  DF = melt(DF[,vars], id.vars = c("rep","snp.start", "snp.end", "pop"))
+  DF = dcast(DF, rep + snp.start + snp.end ~ variable + pop, value.var = "value")
   pos = melt(positions)
   colnames(pos)[2] = "rep"
   pos$rep=as.character(pos$rep)
@@ -167,20 +190,27 @@ makePop.df=function(inp,Nsites,positions,selPop){
   starts = pos %>% group_by(rep) %>% mutate(snp.start=row_number()) %>% slice(unique(DF$snp.start)) %>% as.data.frame()
   colnames(ends)[1] = "bp.end"
   colnames(starts)[1] = "bp.start"
-  
   ends$bp.end=ends$bp.end * Nsites
   starts$bp.start=starts$bp.start * Nsites
-  DF=merge(DF,starts,by=c("snp.start","rep"))
-  DF=merge(DF,ends,by=c("snp.end","rep"))
+  DF = merge(DF,starts,by=c("snp.start","rep"))
+  DF = merge(DF,ends,by=c("snp.end","rep"))
   
-  DF=DF[order(rep,snp.start),]
-  dxy=dcast(melt(inp@nuc.diversity.between), Var2 ~ Var1, value.var="value")
+  DF = DF[order(DF$rep, DF$snp.start),]
   
-  DF = cbind(DF,dxy)
+  dxy = dcast(melt(inp@nuc.diversity.between), Var2 ~ Var1, value.var="value")
+  colnames(dxy)[2] = 'dxy'
+  fst = dcast(melt(inp@nuc.F_ST.pairwise), Var2 ~ Var1, value.var="value")
+  colnames(fst)[2] = 'fst'
+  print(str(dxy))
+  print(str(fst))
+  print(str(DF))
+  DF = cbind(DF, dxy)
+  DF = cbind(DF, fst)
   DF$selPop = selPop
-  DF=DF[,c(2,3,1,8,9,4,5,6,7,10,11,12)]
+  DF=DF[,c(2,3,1,10,11,4,5,6,7,8,9,11,13,15,16)]
   return(DF)
 }
+
 
 makeOnePop.df=function(inp,Nsites,positions,popIndex){
   df=as.data.frame(get.diversity(inp)[[popIndex]])
@@ -216,11 +246,11 @@ makeOnePop.df=function(inp,Nsites,positions,popIndex){
 }
 
 
-
 # Read output of cosi2 simulation
-sim = readMS(args[1])
-positions = read.ms.output(file.ms.output=args[1])
+sim = readMS(in_file)
+positions = read.ms.output(file.ms.output=in_file)
 positions = positions$positions
+winSize = round(length(positions[[1]]) / numWindows, digits = -1)
 
 # Define populations...number of anc and der specified in command line?
 pops = makePops(samp_sizes)
@@ -229,14 +259,31 @@ sim=set.populations(sim,pops) #Only works for two populations currently
 sim=diversity.stats(sim)
 sim=diversity.stats.between(sim)
 
+## EXPERIMENTAL ##
+
+sim = set.outgroup(sim, new.outgroup = seq(1,20))
+
+## ##########
+
 # Divide simulated data into windows
 # type=1: Define windows based on SNP counts
 # type=2: Define windows based on nucleotide counts
+
 sim.slide = sliding.window.transform(sim, width = winSize, jump = winSize * slideRate, type = 1, whole.data = FALSE)
 sim.slide = diversity.stats(sim.slide)
 sim.slide = diversity.stats.between(sim.slide)
 sim.slide = linkage.stats(sim.slide)
 sim.slide = F_ST.stats(sim.slide)
+# sim.slide = mult.linkage.stats(sim)
+# sim.slide = neutrality.stats(sim.slide, new.outgroup = seq(0, samp_sizes[1]))
+sim.slide = neutrality.stats(sim.slide, detail=TRUE)
+# sim = detail.stats(sim)
+# freq = sim@region.stats@minor.allele.freqs[[1]]
+# freq.table <- list()
+# freq.table[[1]] <- table(freq)
+# sim.slisim <- splitting.data(sim.slide, positions= list(900:1100, 1200:2000), type=1)
+# sim.slide = sweeps.stats(sim.slide)
+
 
 df = makePop.df(sim.slide, Nsites, positions, selPop)
 df$rep = as.factor(df$rep)
@@ -244,30 +291,17 @@ df$mid = (df$bp.end + df$bp.start)/2
 df$bp.len = (df$bp.end - df$bp.start)
 df$Pi.1 = df$nuc.diversity.within_1 / df$bp.len
 df$Pi.2 = df$nuc.diversity.within_2 / df$bp.len
-df$dxy.1.2 = df[['pop1/pop2']] / df$bp.len
+df$dxy.1.2 = df[['dxy']] / df$bp.len
 
 tdf = melt(df[,c('rep','mid','Pi.1','Pi.2','dxy.1.2')],id=c("rep","mid"))
 pdf(file = gsub(".tmp.txt", ".plots.pdf", args[2]))
 tdf$id = paste(tdf$rep, tdf$variable)
 ggplot() + geom_line(data = tdf, aes(x=mid, y=value, group = id, color = variable), alpha=0.7) + geom_smooth(data = tdf, aes(x=mid, y=value, color = variable),method="loess")
 
-ggplot() + geom_line(data = df, aes(x = mid, y = Pi.1, color = rep), alpha = 0.8) + geom_smooth(data = df, aes(x = mid, y = Pi.1,color="green"),method="loess") + ggtitle("Population 1")
+ggplot() + geom_line(data = df, aes(x = mid, y = Pi.1, color = rep), alpha = 0.8) + geom_smooth(data = df, aes(x = mid, y = Pi.1,color = "green"), method="loess") + ggtitle("Population 1")
 
-ggplot() + geom_line(data = df, aes(x = mid, y = Pi.2, color = rep), alpha = 0.8) + geom_smooth(data = df, aes(x = mid, y = Pi.2,color="green"),method="loess") + ggtitle("Population 2")
+ggplot() + geom_line(data = df, aes(x = mid, y = Pi.2, color = rep), alpha = 0.8) + geom_smooth(data = df, aes(x = mid, y = Pi.2,color = "green"), method="loess") + ggtitle("Population 2")
 
-#+ geom_line(data = df, aes(x = mid, y = Pi.2, group = rep, color = "blue", alpha = 0.8)) + geom_smooth(data = df, aes(x = mid, y = Pi.2,color="blue"),method="loess") + geom_line(data = df, aes(x = mid, y = dxy.1.2, group = rep, color="red", alpha = 0.8)) + geom_smooth(data = df, aes(x = mid, y = dxy.1.2,color="red"),method="loess") + xlab("Position") + ylab("Diversity") + ggtitle("Pop 1")
-# ggplot() + geom_line(data = df, aes(x = mid, y = Pi.2, color = rep), alpha = 0.5) + geom_smooth(data = df, aes(x = mid, y = Pi.2)) + xlab("Position") + ylab("Diversity") + ggtitle("Pop 2")
-# 
-# ggplot(data = df, aes(x = mid, y = Pi.1)) + geom_smooth(color="green") + geom_smooth(data = df, aes(x = mid, y = Pi.2), color="blue") + geom_smooth(data = df, aes(x = mid, y = dxy.1.2), color = "red") + xlab("Position") + ylab("Pi") + ggtitle("Pi Within vs Pi Between")
-# 
-# ggplot() + geom_line(data = df, aes(x = mid, y = dxy.1.2, color = rep), alpha = 0.5) + geom_smooth(data = df, aes(x = mid, y = dxy.1.2)) + xlab("Position") + ylab("Divergence") + ggtitle("Pop 1 vs Pop 2")
-
-# for (i in 1:length(sim.slide@populations)){
-#   for (j in (i + 1):length(sim.slide@populations)){
-#   ggplot() + geom_line(data = df, aes(x = "mid", y = paste("Dxy.", i,",",j, sep=""), color = "rep"), alpha = 0.5) + geom_smooth(data = df, aes_string(x = "mid", y = paste("Dxy.", i,".",j, sep=""))) + xlab("Position") + ylab("Divergence")
-#   ggplot() + geom_smooth(data = df, aes_string(x = "mid", y = paste("Dxy.", i,",",j, sep=""))) + geom_smooth(data = df, aes_string(x = "mid", y = paste("Pi.", i, sep=""))) + geom_smooth(data = df, aes_string(x = "mid", y = paste("Pi.",j, sep=""))) + xlab("Position") + ylab("Divergence")+ xlab("Position") + ylab("Pi")
-# }
-# }
 
 dev.off()
       

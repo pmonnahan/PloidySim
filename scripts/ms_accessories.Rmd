@@ -1,0 +1,217 @@
+---
+title: "mssel_summarize_output"
+author: "Patrick Monnahan"
+date: "10/25/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+msr = read.table("~/Documents/Research/PloidySim/mssel_out_R3.txt",head=T)
+msr$s = as.factor(msr$s)
+msr %<>% mutate(Alt=ifelse(str_detect(substr(subrep,2,9), "Alt"), "Alt", "Org"))
+msr['ALTPloidy'] = paste(msr$ploidy, msr$Alt)
+msr$ALTPloidy = as.factor(msr$ALTPloidy)
+
+msr["REP"] = paste(msr$s, msr$dom, msr$rep, msr$Alt)
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+
+ggplot(msr, aes(x=bp.end, y = div2, color = as.factor(ploidy), linetype=as.factor(sel))) + geom_smooth() + facet_grid(~dom)
+
+ggplot(msr[msr$dom=="additive" & msr$s!=0.001,], aes(x=bp.end, y = div2, color = as.factor(ALTPloidy), linetype = s)) + geom_smooth(method="loess",span=0.2, size=1, se=F) + xlab("Position") + scale_color_brewer(limits=c("2 Org", "2 Alt","4 Alt","4 Org"), labels = c("Dip/Dip", "Tet/Dip", "Dip/Tet","Tet/Tet"),palette = "RdBu") + guides(linetype=guide_legend(title="Sel. Coeff."), color = guide_legend(title="Traj/Params")) 
+
+ggplot(msr[msr$s!=0.001,], aes(x=bp.end, y = div2, color = as.factor(ALTPloidy), linetype = s)) + geom_smooth(method="loess",span=0.2, size=1, se=F) + xlab("Position") + scale_color_brewer(limits=c("2 Org", "2 Alt","4 Alt","4 Org"), labels = c("Dip/Dip", "Tet/Dip", "Dip/Tet","Tet/Tet"),palette = "RdBu") + facet_grid(~dom) + guides(linetype=guide_legend(title="Sel. Coeff."), color = guide_legend(title="Traj/Params")) + theme_bw() + ylab("Diversity")
+
+```
+
+
+Functions to generate allele frequency trajectory of beneficial alleles
+```{r}
+
+  
+genoFreqs = function(freqs){
+  AA = freqs ^ 2
+  Aa = 2 * freqs * (1 - freqs)
+  aa = (1 - freqs) ^ 2
+  AAAA = freqs ^ 4
+  AAAa = 4 * (freqs ^ 3) * (1 - freqs)
+  AAaa = 6 * (freqs ^ 2) * (1 - freqs) ^ 2
+  Aaaa = 4 * freqs * (1 - freqs) ^ 3
+  aaaa = (1 - freqs) ^ 4
+  dfreq = data.frame("p" = freqs, "AA" = AA, "Aa" = Aa, "aa" = aa, "Ploidy" = rep(2, length(freqs)))
+  tfreq = data.frame("p" = freqs, "AAAA" = AAAA, "AAAa" = AAAa, "AAaa" = AAaa, "Aaaa" = Aaaa, "aaaa" = aaaa, "Ploidy" = rep(4, length(freqs)))
+  DF = rbind(melt(dfreq, id.var = c("p", "Ploidy")), melt(tfreq, id.var = c("p", "Ploidy")))
+  return(DF)
+}
+
+freqs = genoFreqs(seq(0,1,0.01))
+
+ggplot(freqs, aes(x = p, y = value, color = as.factor(Ploidy), group = variable)) + geom_line() + scale_color_manual(name="Ploidy", values = c('red','blue')) + annotate("text", x = 0.25, y = 0.625, label="aa", color = "red") + annotate("text", x = 0.5, y = 0.55, label="Aa", color = "red") + annotate("text", x = 0.75, y = 0.625, label="AA", color = "red") + annotate("text", x = 0.085, y = 0.6, label="aaaa", color = "blue") + annotate("text", x = 0.085, y = 0.365, label="Aaaa", color = "blue") + annotate("text", x = 0.5, y = 0.395, label="AAaa", color = "blue") + annotate("text", x = 0.915, y = 0.365, label="AAAa", color = "blue") + annotate("text", x = 0.915, y = 0.6, label="AAAA", color = "blue") + ylab("Genotype Frequency") + xlab("Allele Frequency") + theme_bw()
+  
+dipTraj = function(s, h, start_freq, end_freq, max_gens){
+  df = data.frame("s" = s, "h1" = h, "gen" = 0, "freq" = start_freq, "dp1" = 0, "dp2" = 0, "w.bar" = 0, "var.w" = 0, "w.bar.p" = 0, "h0" = NA, "h2" = NA, "ploidy" = as.factor(2))
+  p = start_freq
+  gen = 0
+  fits = c(1 + s, 1 + (s * h), 1) / (1 + s)
+  while (p < end_freq & gen < max_gens){
+    q = 1 - p
+    Gfreqs = c(p ^ 2, 2 * p * q, q ^ 2)
+    num = (Gfreqs[1] * fits[1]) + (p * q * fits[2])
+    w.bar.p = (p * fits[1]) + (q * fits[2])
+    w.bar = sum(Gfreqs * fits)
+    p_prime = num / w.bar
+    dp1 = p_prime - p
+    dp2 = (p * (w.bar.p - w.bar)) / w.bar
+    p = p_prime
+    var.w = sum((Gfreqs * (fits - w.bar) ^ 2) / length(Gfreqs))
+    gen = gen + 1
+    
+    df = rbind(df, c(s, h, gen, p, dp1, dp2, w.bar, var.w, w.bar.p, NA, NA, 2))
+  }
+  return(df[-1,])
+}
+
+tetTraj = function(s, h2, h1, h0, start_freq, end_freq, max_gens){
+  df = data.frame("s" = s, "h1" = h1, "gen" = 0, "freq" = start_freq, "dp1" = 0, "dp2" = 0, "w.bar" = 0, "var.w" = 0, "w.bar.p" = 0, "h0" = h0, "h2" = h2, "ploidy" = as.factor(4))
+  p = start_freq
+  gen = 0
+  freq = c(p)
+  fits = c(1 + s, 1 + (s * h0), 1 + (s * h1), 1 + (s * h2), 1) / (1 + s)
+  while (p < end_freq & gen < max_gens){
+    q = 1 - p
+    Gfreqs = c(p ^ 4, 4 * p^3 * q, 6 * p^2 * q^2, 4 * p * q^3, q ^ 4)
+    num = (Gfreqs[1] * fits[1]) + (3 * p ^ 3 * q * fits[2]) + (3 * p ^ 2 * q ^ 2 * fits[3]) + (p * q ^ 3 * fits[4])
+    w.bar.p = ((p ^ 3) * fits[1]) + (3 * (p ^ 2) * q * fits[2]) + (3 * p * (q ^ 2) * fits[3]) + ((q ^ 3) * fits[4])
+    w.bar = sum(Gfreqs * fits)
+    p_prime = num / w.bar
+    dp1 = p_prime - p
+    dp2 = (p * (w.bar.p - w.bar)) / w.bar
+    p = p_prime
+    var.w = sum((Gfreqs * (fits - w.bar) ^ 2) / length(Gfreqs))
+    gen = gen + 1
+    df = rbind(df, c(s, h1, gen, p, dp1, dp2, w.bar, var.w, w.bar.p, h0, h2, 4))
+  }
+  return(df[-1,])
+}
+
+difTraj = function(s, start_freq, end_freq, N, ploidy, max_gens = 10000){
+  df = data.frame("s" = s, "gen" = 0, "freq" = start_freq, "ploidy" = ploidy)
+  p = start_freq
+  gen = 0
+  while (p < end_freq & gen < max_gens){
+    pq = p * (1 - p)
+    mux = 2 * N * s * pq / tanh(2 * N * s * p)
+    t = 1 / (ploidy * 2 * N)
+    varx = (pq * t) ^ 0.5
+    p_prime = p + mux * t
+    if (runif(1) >= 0.5){
+      p_prime = p_prime + varx
+    }
+    else{
+      p_prime = p_prime - varx
+    }
+    df = rbind(df, c(s, gen, p_prime, ploidy))
+    print(c(p_prime, gen, mux, t, mux * t, varx))
+    p = p_prime
+    gen = gen + 1
+  }
+  return(df)
+}
+
+getFits = function(freqs, s, h0, h1, h2){
+  df = data.frame("s" = s, "h1" = h1, "freq" = s, "w.bar" = 0, "var.w" = 0, "w.bar.p" = 0, "h0" = NA, "h2" = NA, "ploidy" = 2)
+  for (i in 1:length(freqs)){
+    p = freqs[i]
+    q = 1 - p
+    Tfits = c(1 + s, 1 + (s * h0), 1 + (s * h1), 1 + (s * h2), 1) / (1 + s)
+    TGfreqs = c(p ^ 4, 4 * p^3 * q, 6 * p^2 * q^2, 4 * p * q^3, q ^ 4)
+    Tw.bar = sum(TGfreqs * Tfits)
+    Dfits = c(1 + s, 1 + (s * h1), 1) / (1 + s)
+    DGfreqs = c(p ^ 2, 2 * p * q, q ^ 2)
+    Dw.bar = sum(DGfreqs * Dfits)
+    Tvar.w = sum((TGfreqs * (Tfits - Tw.bar) ^ 2) / length(TGfreqs))
+    Dvar.w = sum((DGfreqs * (Dfits - Dw.bar) ^ 2) / length(DGfreqs))
+    Dw.bar.p = (p * Dfits[1]) + (q * Dfits[2])
+    Tw.bar.p = ((p ^ 3) * Tfits[1]) + (3 * (p ^ 2) * q * Tfits[2]) + (3 * p * (q ^ 2) * Tfits[3]) + ((q ^ 3) * Tfits[4])
+    df = rbind(df, c(s, h1, p, Dw.bar, Dvar.w, Dw.bar.p, NA, NA, 2))
+    df = rbind(df, c(s, h1, p, Tw.bar, Tvar.w, Tw.bar.p, h0, h2, 4))
+  }
+  return(df[-1,])
+}
+
+
+s = c(0.1, 0.01, 0.001)
+h1 = c(0.5, 0, 1)
+h0 = c(0.75, 0, 1)
+h2 = c(0.25, 0, 1)
+
+simTraj = function(s, h0, h1, h2, start_freq, end_freq, maxGen){
+  traj = data.frame()
+  for (i in 1:length(s)){
+    for (j in 1:length(h1)){
+      print(paste("Starting; s =", s[i], ", h =", h1[j]))
+      jj = dipTraj(s[i], h1[j], start_freq, end_freq, maxGen)
+      kk = tetTraj(s[i], h2[j], h1[j], h0[j], start_freq, end_freq, maxGen)
+      traj = rbind(traj, jj)
+      traj = rbind(traj, kk)
+    }
+  }
+  return(traj)
+}
+
+traj = simTraj(s, h0, h1, h2, 0.05, 1.0, 9999)
+
+ggplot(traj, aes(x=gen, y=freq, linetype=as.factor(s), color=ploidy)) + geom_line()+facet_grid(~h1,scales="free_x") + scale_color_discrete()
+
+ggplot(traj[traj$s==0.1,], aes(x=gen, y=freq, linetype=as.factor(s), color=ploidy)) + geom_line() + scale_color_discrete()
+
+ggplot(fits[fits$s==0.1,], aes(x=freq, y=var.w, color = as.factor(ploidy), linetype=as.factor(h1))) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Allele Frequency") + ylab("Variance in Fitness") + theme_bw()
+
+ggplot(fits[fits$s==0.1,], aes(x=freq, y=w.bar, color = as.factor(ploidy), linetype=as.factor(h1))) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Allele Frequency") + ylab("Mean Fitness") + theme_bw()
+
+```
+
+
+```{r}
+
+traj_file = "/Users/pmonnahan/Documents/Research/PloidySim/mssel_output/mssel_input/traj_p4_s0.001_N10000_recessive_rep4-4Alt.txt"
+
+msselRun = function(N, n, traj_file, L = 1000000, mu = 1e-8, r = 1e-8, ploidy = 2, numWindows = 200, slideRate = 0.5, selPos = 0.5, selPop = 2, ms = "/Users/pmonnahan/Documents/Research/code/dmc/mssel_modified/mssel", ms_summarize = "/Users/pmonnahan/Documents/Research/PloidySim/scripts/ms_summarize.R"){ 
+
+  p = ploidy
+  
+  out1 = str_replace(traj_file, ".txt", ".ms.out")
+  out2 = str_replace(traj_file, ".txt", ".R.out")
+  
+  theta = N * p * mu * L 
+  rho = N * p * r * L
+  mig_str = "2 0 40 40 0 -ej 0.2825 2 1"
+  
+  args1 = paste((2 * p * n), 1, n * p, n * p, traj_file, L * selPos, "-r", rho, L, "-t", theta, "-I", mig_str)
+  
+  args2 = paste(out1, out2, L, numWindows, slideRate, Npops, selPop, n * p, n * p)
+  
+  system2(ms, args1, stdout = out1)
+  
+  system2(ms_summarize, args2)
+  
+  new_dat = read.table(out2)
+  
+  #change names
+  return(new_dat)
+  
+}
+
+dat = rbind(dat, new_dat)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

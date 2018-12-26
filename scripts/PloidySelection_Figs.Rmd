@@ -1,5 +1,5 @@
 ---
-title: "mssel_summarize_output"
+title: "PloidySelection_Figs"
 author: "Patrick Monnahan"
 date: "10/25/2018"
 output: html_document
@@ -9,12 +9,11 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 #Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
 library(assertthat)
-library(ggplot2)
-library(dplyr)
-library(tidyr)
+library(tidyverse)
 library(PopGenome)
 library(stringr)
 library(data.table)
+library(gridExtra)
 
 ```
 
@@ -43,12 +42,39 @@ freqs = genoFreqs(seq(0,1,0.01))
 ggplot(freqs, aes(x = p, y = value, color = as.factor(Ploidy), group = variable)) + geom_line() + scale_color_manual(name="Ploidy", values = c('red','blue')) + annotate("text", x = 0.25, y = 0.625, label="aa", color = "red") + annotate("text", x = 0.5, y = 0.55, label="Aa", color = "red") + annotate("text", x = 0.75, y = 0.625, label="AA", color = "red") + annotate("text", x = 0.085, y = 0.6, label="aaaa", color = "blue") + annotate("text", x = 0.085, y = 0.365, label="Aaaa", color = "blue") + annotate("text", x = 0.5, y = 0.395, label="AAaa", color = "blue") + annotate("text", x = 0.915, y = 0.365, label="AAAa", color = "blue") + annotate("text", x = 0.915, y = 0.6, label="AAAA", color = "blue") + ylab("Genotype Frequency") + xlab("Allele Frequency") + theme_bw()
 ```
 
+Dominance functions
+```{r}
+getDomCoefs = function(dominance, ploidy = 100){
+  if (dominance == 0){
+    coeffs = rep(0, ploidy - 1)
+  }
+  else if (dominance == 1){
+    coeffs = rep(1, ploidy - 1)
+  }
+  else {
+    dom = (1 - dominance) - 0.5
+    dom = abs((dom * 10 + sign(dom)) ^ sign(dom))
+    coeffs = (seq(1, ploidy - 1) / ploidy) ^ dom
+  }
+  return(coeffs)
+}
+
+doms = c(seq(0,1, 0.1))
+Doms = as.data.frame(sapply(doms, getDomCoefs))
+Doms = rbind(c(0,0,0,0,0,0,0), Doms, c(1,1,1,1,1,1,1))
+colnames(Doms) = doms
+Doms = cbind(Doms, data.frame("i/k"=seq(0,100) / 100))
+mDoms = melt(Doms, id.var = "i.k")
+ggplot(mDoms, aes(x = i.k, y = value, color = variable)) + geom_line() + scale_color_discrete(name = "Dominance\nScalar") + theme_bw() + xlab("i / k") + ylab("Dominance Coefficient")
+```
+
 Allele frequency trajectories plot (dips and tets)
 ```{r}
 # Generate allele frequency trajectory based on deterministic recursion equations   
 getTraj = function(s, dom, ploidy, start_freq, N = -9, end_freq = 0.99, maxGens = 9999, maxTries = 10){
   dom_coeffs = getDomCoefs(dom, ploidy)
   attempts = 0
+  gen = 0
   p = start_freq
   k = ploidy
   while (attempts <= maxTries & p < end_freq & gen <= maxGens){
@@ -85,60 +111,33 @@ getTraj = function(s, dom, ploidy, start_freq, N = -9, end_freq = 0.99, maxGens 
 }
 
 #E.g
-traj = rbind(getTraj(0.1, 0, 2, 0.05), getTraj(0.1, 0, 4, 0.05))
-traj = rbind(traj, getTraj(0.1, 0.5, 2, 0.05))
-traj = rbind(traj, getTraj(0.1, 0.5, 4, 0.05))
-traj = rbind(traj, getTraj(0.1, 1, 2, 0.05))
-traj = rbind(traj, getTraj(0.1, 1, 4, 0.05))
+traj1 = rbind(getTraj(0.1, 0, 2, 0.05), getTraj(0.1, 0, 4, 0.05))
+traj1 = rbind(traj1, getTraj(0.1, 0.5, 2, 0.05))
+traj1 = rbind(traj1, getTraj(0.1, 0.5, 4, 0.05))
+traj1 = rbind(traj1, getTraj(0.1, 1, 2, 0.05))
+traj1 = rbind(traj1, getTraj(0.1, 1, 4, 0.05))
 
-ggplot(traj, aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_color_manual(name="Ploidy",values=c('red','blue')) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency")
+ggplot(traj1, aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_color_manual(name="Ploidy",values=c('red','blue')) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency")
 
 ```
 
 Allele frequency trajectories for additive allele with arbitrary ploidy
 ```{r}
-
-```
-
-
-Dominance functions
-```{r}
-getDomCoefs = function(dominance, ploidy = 100){
-  if (dominance == 0){
-    coeffs = rep(0, ploidy - 1)
+s = 0.1
+doms = c(0, 0.1, 0.3, 0.5, 0.7, 0.9, 1)
+ploidies = c(2, 4, 6, 8)
+traj2 = data.frame()
+for (i in 1:length(doms)){
+  for (j in 1:length(ploidies)){
+    traj2 = rbind(traj2, getTraj(s, doms[i], ploidies[j], 0.05))
   }
-  else if (dominance == 1){
-    coeffs = rep(1, ploidy - 1)
-  }
-  else {
-    dom = (1 - dominance) - 0.5
-    dom = abs((dom * 10 + sign(dom)) ^ sign(dom))
-    coeffs = (seq(1, ploidy - 1) / ploidy) ^ dom
-  }
-  return(coeffs)
 }
 
-doms = c(seq(0,1, 0.1))
-Doms = as.data.frame(sapply(doms, getDomCoefs))
-Doms = rbind(c(0,0,0,0,0,0,0), Doms, c(1,1,1,1,1,1,1))
-colnames(Doms) = doms
-Doms = cbind(Doms, data.frame("i/k"=seq(0,100) / 100))
-mDoms = melt(Doms, id.var = "i.k")
-ggplot(mDoms, aes(x = i.k, y = value, color = variable)) + geom_line() + scale_color_discrete(name = "Dominance\nScalar") + theme_bw() + xlab("i / k") + ylab("Dominance Coefficient")
+ggplot(traj2, aes(x=gen/100, y=freq, color=as.factor(ploidy))) + geom_line() + scale_color_manual(name="Ploidy",values=c('red','blue','green','purple')) + theme_bw() + xlab("Generation (100's)") + ylab("Allele Frequency") + facet_grid(~dom, scales="free_x")
 ```
 
-
-
-
-
+Mean and Variance in fitness
 ```{r}
-#Fixation probs of diploids as function of N
-getFix = function(p, s, N){
-  num = 1 - exp(-4*N*s*p)
-  den = 1 - exp(-4*N*s)
-  return(num / den)
-}
-
 # Generate fitness stats as a function of allele frequency
 getFits = function(freqs, s, h1, h, h3){
   df = data.frame("s" = s, "h" = h, "freq" = s, "w.bar" = 0, "var.w" = 0, "w.bar.p" = 0, "h1" = NA, "h3" = NA, "ploidy" = 2)
@@ -167,6 +166,42 @@ getFits = function(freqs, s, h1, h, h3){
   return(df[-1,])
 }
 
+fits = getFits(seq(0, 1, 0.01), c(0.1, 0.01, 0.001), c(0.25, 1, 0), c(0.5, 1, 0), c(0.75, 1, 0))
+# Plot mean fitness 
+mean_fit = ggplot(fits[fits$s==0.1,], aes(x=freq, y=w.bar, color = as.factor(ploidy), linetype=as.factor(h))) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Allele Frequency") + ylab("Mean Fitness") + theme_bw()
+
+var_fit = ggplot(fits[fits$s==0.1,], aes(x=freq, y=var.w, color = as.factor(ploidy), linetype=as.factor(h))) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Allele Frequency") + ylab("Variance in Fitness") + theme_bw()
+
+grid.arrange(mean_fit, var_fit)
+```
+
+
+
+
+Plot fixation probabilities as a function of ploidy
+```{r}
+#Fixation probs of diploids as function of N
+getFix = function(p, s, N, c){
+  num = 1 - exp(-2*c*N*s*p)
+  den = 1 - exp(-2*c*N*s)
+  return(num / den)
+}
+
+p = c(0.0001, 0.001, 0.01, 0.05, 0.1)
+N = c(10, 100, 1000, 10000)
+s = c(0.001, 0.01, 0.1)
+c = c(2, 4, 6, 8)
+
+params = expand.grid(p = p, s = s, N = N, ploidy = c)
+
+params %<>% mutate(fixprob = pmap(list(p, s, N, ploidy), getFix))
+
+params = data.frame("p" = c(0.0001, 0.001, 0.0))
+fix = getFix(seq())
+
+```
+
+```{r}
 # Function to loop over all possible combinations of s and h.
 simTraj = function(s = c(0.1, 0.01, 0.001), h2 = c(0.25, 0, 1), h1 = c(0.5, 0, 1), h0 = c(0.75, 0, 1), start_freq =  0.05, end_freq = 1.0, maxGen = 9999){
   traj = data.frame()

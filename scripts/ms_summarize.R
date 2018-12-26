@@ -50,17 +50,17 @@ Npops = as.numeric(args[6])
 selPop = as.numeric(args[7])
 samp_sizes = as.numeric(c(args[8:length(args)]))
 
-in_file = "/Users/pmonnahan/Documents/Research/PloidySim/mssel_out_p2.0_s0.1_N1000000_additive_rep0Alt.txt"
-out_file = str_replace(in_file,"txt",".out")
-Nsites = 1000000
-numWindows = 20
-slideRate = 0.5
-Npops = 2
-selPop = 2
-samp_sizes = as.numeric(c(20,20))
+# in_file = "/Users/pmonnahan/Documents/Research/PloidySim/mssel_out_p2.0_s0.1_N1000000_additive_rep0Alt.txt"
+# out_file = str_replace(in_file,"txt",".out")
+# Nsites = 1000000
+# numWindows = 20
+# slideRate = 0.5
+# Npops = 2
+# selPop = 2
+# samp_sizes = as.numeric(c(20,20))
 
 # Necessary Functions
-read.ms.output <- function( txt=NA, file.ms.output=NA,MSMS=FALSE) {
+read.ms.output2 <- function( txt=NA, file.ms.output=NA,MSMS=FALSE) {
   
   if( !is.na(file.ms.output) ) txt <- scan(file=file.ms.output,
                                            what=character(0), sep="\n", quiet=TRUE)
@@ -150,8 +150,7 @@ makePops <- function(sampSize_list){
   return(popList)
 }
 
-## PROBLEM IS THAT EACH REP HAS A DIFFERENT NUMBER OF SITES.  USING ONE WINDOW SIZE RESULTS IN REPS WITH DIFFERENT NUMBER OF WINDOWS
-makePop.df=function(inp,Nsites,positions,selPop, numWindows){
+munge = function(inp,Nsites,positions,selPop, numWindows){
   DF = data.frame()
   
   for (i in 1:length(inp@populations)){
@@ -159,12 +158,7 @@ makePop.df=function(inp,Nsites,positions,selPop, numWindows){
     df$snp.start=as.numeric(str_split_fixed(rownames(df)," ",4)[,2])
     df$snp.end=as.numeric(str_split_fixed(str_split_fixed(rownames(df)," ",4)[,4]," ",2)[,1])
     df$rep=str_split_fixed(str_split_fixed(rownames(df),"_",3)[,3], "[.]",2)[,1]
-
-    # df %<>% add_count(rep)
-    # df %>% mutate(winSize = round(length(positions[[1]]) / numWindows, digits = -1))
-    # 
-    # winSize = round(length(positions[[1]]) / numWindows, digits = -1)
-    # 
+    
     df1=as.data.frame(get.linkage(inp)[[i]])
     df1$snp.start=as.numeric(str_split_fixed(rownames(df1)," ",4)[,2])
     df1$snp.end=as.numeric(str_split_fixed(str_split_fixed(rownames(df1)," ",4)[,4]," ",2)[,1])
@@ -211,7 +205,6 @@ makePop.df=function(inp,Nsites,positions,selPop, numWindows){
   return(DF)
 }
 
-
 makeOnePop.df=function(inp,Nsites,positions,popIndex){
   df=as.data.frame(get.diversity(inp)[[popIndex]])
   df$snp.start=as.numeric(str_split_fixed(rownames(df)," ",4)[,2])
@@ -245,16 +238,14 @@ makeOnePop.df=function(inp,Nsites,positions,popIndex){
   return(df)
 }
 
-
-# Read output of cosi2 simulation
+# Read output of mssel simulation
 sim = readMS(in_file)
-positions = read.ms.output(file.ms.output=in_file)
+positions = read.ms.output2(file.ms.output=in_file)
 positions = positions$positions
 winSize = round(length(positions[[1]]) / numWindows, digits = -1)
 
 # Define populations...number of anc and der specified in command line?
 pops = makePops(samp_sizes)
-print(pops)
 sim=set.populations(sim,pops) #Only works for two populations currently
 sim=diversity.stats(sim)
 sim=diversity.stats.between(sim)
@@ -285,7 +276,7 @@ sim.slide = neutrality.stats(sim.slide, detail=TRUE)
 # sim.slide = sweeps.stats(sim.slide)
 
 
-df = makePop.df(sim.slide, Nsites, positions, selPop)
+df = munge(sim.slide, Nsites, positions, selPop)
 df$rep = as.factor(df$rep)
 df$mid = (df$bp.end + df$bp.start)/2
 df$bp.len = (df$bp.end - df$bp.start)
@@ -308,4 +299,5 @@ dev.off()
 write.table(df,args[2],row.names = FALSE, quote = FALSE, col.names = FALSE)
 
 
+dat4 %>% filter(mu == 0.0000001 & recomb == 0.0000001 & N == 10000 & dom == 0.5) %>% ggplot(.) + geom_smooth(aes(x = bp.end, y = Pi.1, color = as.factor(ploidy)), linetype = "solid", method = "loess", span = 0.01, se = F, size = 0.7) + geom_smooth(aes(x = bp.end, y = Pi.2, color = as.factor(ploidy)), linetype = "dashed", method = "loess", span = 0.01, se = F, size = 0.5) + facet_grid(~s) +xlab("Position (bp)") + ylab("Diversity") + theme_bw() + scale_color_manual(name="Ploidy", values = c('red','blue'))
 

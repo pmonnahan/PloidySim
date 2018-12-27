@@ -9,12 +9,15 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 #Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
 library(assertthat)
-library(tidyverse)
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
 library(PopGenome)
 library(stringr)
 library(data.table)
 library(gridExtra)
-
+library(magrittr)
 ```
 
 HW Genotype frequencies for diploids and tetraploids
@@ -69,7 +72,7 @@ ggplot(mDoms, aes(x = i.k, y = value, color = variable)) + geom_line() + scale_c
 ```
 
 Allele frequency trajectories plot (dips and tets)
-```{r}
+```{r, echo = FALSE}
 # Generate allele frequency trajectory based on deterministic recursion equations   
 getTraj = function(s, dom, ploidy, start_freq, N = -9, end_freq = 0.99, maxGens = 9999, maxTries = 10){
   dom_coeffs = getDomCoefs(dom, ploidy)
@@ -122,7 +125,7 @@ ggplot(traj1, aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy
 ```
 
 Allele frequency trajectories for additive allele with arbitrary ploidy
-```{r}
+```{r, echo = FALSE}
 s = 0.1
 doms = c(0, 0.1, 0.3, 0.5, 0.7, 0.9, 1)
 ploidies = c(2, 4, 6, 8)
@@ -133,7 +136,7 @@ for (i in 1:length(doms)){
   }
 }
 
-ggplot(traj2, aes(x=gen/100, y=freq, color=as.factor(ploidy))) + geom_line() + scale_color_manual(name="Ploidy",values=c('red','blue','green','purple')) + theme_bw() + xlab("Generation (100's)") + ylab("Allele Frequency") + facet_grid(~dom, scales="free_x")
+ggplot(traj2, aes(x=gen/1000, y=freq, color=as.factor(ploidy))) + geom_line() + scale_color_manual(name="Ploidy",values=c('red','blue','green','purple')) + theme_bw() + xlab("Generation (1k)") + ylab("Allele Frequency") + facet_wrap(~dom, scales="free_x", nrow = 2)
 ```
 
 Mean and Variance in fitness
@@ -175,61 +178,58 @@ var_fit = ggplot(fits[fits$s==0.1,], aes(x=freq, y=var.w, color = as.factor(ploi
 grid.arrange(mean_fit, var_fit)
 ```
 
-
-
-
 Plot fixation probabilities as a function of ploidy
 ```{r}
 #Fixation probs of diploids as function of N
-getFix = function(p, s, N, c){
+getFix = function(s, N, c){
+  p = 1 / (N * c)
   num = 1 - exp(-2*c*N*s*p)
   den = 1 - exp(-2*c*N*s)
-  return(num / den)
+  return(as.numeric(num / den))
 }
 
-p = c(0.0001, 0.001, 0.01, 0.05, 0.1)
-N = c(10, 100, 1000, 10000)
-s = c(0.001, 0.01, 0.1)
+N = c(10, 20, 50, 100, 500, 1000)
+s = c(0.001)
 c = c(2, 4, 6, 8)
 
-params = expand.grid(p = p, s = s, N = N, ploidy = c)
+params = expand.grid(s = s, N = N, ploidy = c)
 
-params %<>% mutate(fixprob = pmap(list(p, s, N, ploidy), getFix))
+params %<>% mutate(fixprob = pmap(list(s, N, ploidy), getFix)) %>% unnest()
 
-params = data.frame("p" = c(0.0001, 0.001, 0.0))
-fix = getFix(seq())
 
+ggplot(params, aes(y = fixprob, x = N, color = as.factor(ploidy))) + geom_line() + geom_hline(yintercept = 2*s, linetype='dashed') + scale_x_log10() + xlab("Population Size") + ylab("Fixation Probability") + scale_color_discrete(name="Ploidy")
 ```
 
+OLD
 ```{r}
-# Function to loop over all possible combinations of s and h.
-simTraj = function(s = c(0.1, 0.01, 0.001), h2 = c(0.25, 0, 1), h1 = c(0.5, 0, 1), h0 = c(0.75, 0, 1), start_freq =  0.05, end_freq = 1.0, maxGen = 9999){
-  traj = data.frame()
-  for (i in 1:length(s)){
-    for (j in 1:length(h1)){
-      print(paste("Starting; s =", s[i], ", h =", h1[j]))
-      jj = dipTraj(s[i], h1[j], start_freq, end_freq, maxGen)
-      kk = tetTraj(s[i], h2[j], h1[j], h0[j], start_freq, end_freq, maxGen)
-      traj = rbind(traj, jj)
-      traj = rbind(traj, kk)
-    }
-  }
-  return(traj)
-}
-
-# Other plots
-
-ggplot(traj, aes(x=gen, y=freq, linetype=as.factor(s), color=ploidy)) + geom_line()+facet_grid(~h1,scales="free_x") + scale_color_discrete()
-
-ggplot(traj[traj$s==0.1,], aes(x=gen, y=var.w, linetype=as.factor(h1), color=ploidy)) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Generation") + ylab("Variance in Fitness") + theme_bw() + scale_x_log10()
-
-ggplot(traj[traj$s==0.1,], aes(x=gen, y=w.bar, linetype=as.factor(h1), color=ploidy)) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Generation") + ylab("Mean Fitness") + theme_bw() + scale_x_log10()
-
-ggplot(traj[traj$s==0.1,], aes(x=gen, y=freq, linetype=as.factor(s), color=ploidy)) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + ylab("Allele Frequency") + xlab("Generation") + theme_bw() 
-
-ggplot(fits[fits$s==0.1,], aes(x=freq, y=var.w, color = as.factor(ploidy), linetype=as.factor(h1))) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Allele Frequency") + ylab("Variance in Fitness") + theme_bw()
-
-ggplot(fits[fits$s==0.1,], aes(x=freq, y=w.bar, color = as.factor(ploidy), linetype=as.factor(h1))) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Allele Frequency") + ylab("Mean Fitness") + theme_bw()
+# # Function to loop over all possible combinations of s and h.
+# simTraj = function(s = c(0.1, 0.01, 0.001), h2 = c(0.25, 0, 1), h1 = c(0.5, 0, 1), h0 = c(0.75, 0, 1), start_freq =  0.05, end_freq = 1.0, maxGen = 9999){
+#   traj = data.frame()
+#   for (i in 1:length(s)){
+#     for (j in 1:length(h1)){
+#       print(paste("Starting; s =", s[i], ", h =", h1[j]))
+#       jj = dipTraj(s[i], h1[j], start_freq, end_freq, maxGen)
+#       kk = tetTraj(s[i], h2[j], h1[j], h0[j], start_freq, end_freq, maxGen)
+#       traj = rbind(traj, jj)
+#       traj = rbind(traj, kk)
+#     }
+#   }
+#   return(traj)
+# }
+# 
+# # Other plots
+# 
+# ggplot(traj, aes(x=gen, y=freq, linetype=as.factor(s), color=ploidy)) + geom_line()+facet_grid(~h1,scales="free_x") + scale_color_discrete()
+# 
+# ggplot(traj[traj$s==0.1,], aes(x=gen, y=var.w, linetype=as.factor(h1), color=ploidy)) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Generation") + ylab("Variance in Fitness") + theme_bw() + scale_x_log10()
+# 
+# ggplot(traj[traj$s==0.1,], aes(x=gen, y=w.bar, linetype=as.factor(h1), color=ploidy)) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Generation") + ylab("Mean Fitness") + theme_bw() + scale_x_log10()
+# 
+# ggplot(traj[traj$s==0.1,], aes(x=gen, y=freq, linetype=as.factor(s), color=ploidy)) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + ylab("Allele Frequency") + xlab("Generation") + theme_bw() 
+# 
+# ggplot(fits[fits$s==0.1,], aes(x=freq, y=var.w, color = as.factor(ploidy), linetype=as.factor(h1))) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Allele Frequency") + ylab("Variance in Fitness") + theme_bw()
+# 
+# ggplot(fits[fits$s==0.1,], aes(x=freq, y=w.bar, color = as.factor(ploidy), linetype=as.factor(h1))) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Allele Frequency") + ylab("Mean Fitness") + theme_bw()
 
 ```
 
@@ -237,122 +237,122 @@ OLD or incomplete ideas
 ```{r}
 
 # Attempting to implement the diffusion approximations for dips and tets...currently not working
-difTraj = function(s, start_freq, end_freq, N, ploidy, max_gens = 10000){
-  df = data.frame("s" = s, "gen" = 0, "freq" = start_freq, "ploidy" = ploidy)
-  p = start_freq
-  gen = 0
-  while (p < end_freq & gen < max_gens){
-    pq = p * (1 - p)
-    mux = 2 * N * s * pq / tanh(2 * N * s * p)
-    t = 1 / (ploidy * 2 * N)
-    varx = (pq * t) ^ 0.5
-    p_prime = p + mux * t
-    if (runif(1) >= 0.5){
-      p_prime = p_prime + varx
-    }
-    else{
-      p_prime = p_prime - varx
-    }
-    df = rbind(df, c(s, gen, p_prime, ploidy))
-    print(c(p_prime, gen, mux, t, mux * t, varx))
-    p = p_prime
-    gen = gen + 1
-  }
-  return(df)
-}
-
-#Functions to run mssell
-traj_file = "/Users/pmonnahan/Documents/Research/PloidySim/mssel_output/mssel_input/traj_p4_s0.001_N10000_recessive_rep4-4Alt.txt"
-traj_file = "/Users/pmonnahan/Documents/Research/PloidySim/testing.txt"
-
-msselRun = function(N, n, traj_file, L = 1000000, mu = 1e-8, r = 1e-8, ploidy = 2, numWindows = 200, slideRate = 0.5, selPos = 0.5, selPop = 2, ms = "/Users/pmonnahan/Documents/Research/code/dmc/mssel_modified/mssel", ms_summarize = "/Users/pmonnahan/Documents/Research/PloidySim/scripts/ms_summarize.R"){ 
-  options(scipen=999)
-  p = ploidy
-  
-  out1 = str_replace(traj_file, ".txt", ".ms.out")
-  out2 = str_replace(traj_file, ".txt", ".R.out")
-  
-  theta = N * p * mu * L 
-  rho = N * p * r * L
-  mig_str = "2 0 40 40 0 -ej 0.2825 2 1"
-  
-  args1 = paste((2 * p * n), 1, n * p, n * p, traj_file, L * selPos, "-r", rho, L, "-t", theta, "-I", mig_str)
-  
-  args2 = paste(out1, out2, L, numWindows, slideRate, Npops, selPop, n * p, n * p)
-  print(args1)
-  print(args2)
-  system2(ms, args1, stdout = out1)
-
-  system2(ms_summarize, args2)
-  
-  new_dat = read.table(out2)
-  
-  #change names
-  return(new_dat)
-  
-}
-
-dat = rbind(dat, new_dat)
-
-## Stochastic simulation of selection for a beneficial allele
-PloidyForSim = function(ploidy,  N, s, h, start_freq, end_freq, maxGen, maxTries){
-  
-  assert_that(ploidy - length(h) == 1)
-  attempts = 0
-  
-  #Sample individuals to reproduce
-  # taken from https://stats.stackexchange.com/questions/67911/how-to-sample-from-a-discrete-distribution
-  sampleDist = function(PLOIDY, n, genoFreqs) { 
-    sample(x = seq(0, PLOIDY), n, replace = T, prob = genoFreqs)
-  }
-  
-  #Initalize population
-  fits = sort( c(1, 1 + h * s, 1 + s) / (1 + s))
-  Pop = rbinom(n = N, size = ploidy, prob = start_freq)
-  p = sum(Pop) / (ploidy * N)
-  freqs = c(p)
-  
-  while(p < end_freq & length(freqs) < maxGen & attempts < maxTries){
-    #Retry if stochastic loss of beneficial allele in previous generation
-    if ( p == 0 ){
-      Pop = rbinom(n = N, size = ploidy, prob = start_freq)
-      p = sum(Pop) / (ploidy * N)
-      freqs = c(p)
-      attempts = attempts + 1
-    }
-    
-    geno_freq = c( table(factor(Pop, levels = as.character(seq(0, ploidy)))) / N )
-    g_prime = ( fits * geno_freq ) / sum(fits * geno_freq) 
-    # Make individuals for next generation
-    p1 = sampleDist(length(g_prime) - 1, N, g_prime)
-    p2 = sampleDist(length(g_prime) - 1, N, g_prime)
-    Pop = c()
-    for (i in 1:N){
-      g1 = sample(c(rep(0, ploidy - p1[i]), rep(1, p1[i])), ploidy / 2, replace = F)
-      g2 = sample(c(rep(0, ploidy - p2[i]), rep(1, p2[i])), ploidy / 2, replace = F)
-      Pop = c(Pop, sum(g1) + sum(g2))
-    }
-    p = sum(Pop) / (ploidy * N)
-    print(p)
-    freqs = c(freqs, p)
-  }
-  return(freqs)
-}
-
-writeTraj = function(file, traj, numPops, selPops, timeScale, trajName = "rep1"){
-  gen = seq(1, length(traj) + 1) / timeScale
-  traj = rev(traj)
-  traj = c(traj, 0)
-  anc_traj = rep(0, length(traj))
-  fileConn = file(file)
-  # writeLines(c(paste("ntraj:", "1"), paste("npop:", numPops), "", paste("n:", length(traj), trajName), paste(gen, traj, anc_traj), sep="\t"), fileConn)
-  writeLines(c(paste("ntraj:", "1"), paste("npop:", numPops), paste("n:", length(traj), trajName)), con = fileConn)
-  
-  dat = data.frame("gen"=gen, "traj"=traj, "anc"=anc_traj)
-  print(dat)
-  write.table(dat, file, quote=F, col.names = F, row.names = F, sep="\t", append=T)
-  close(fileConn)
-}
+# difTraj = function(s, start_freq, end_freq, N, ploidy, max_gens = 10000){
+#   df = data.frame("s" = s, "gen" = 0, "freq" = start_freq, "ploidy" = ploidy)
+#   p = start_freq
+#   gen = 0
+#   while (p < end_freq & gen < max_gens){
+#     pq = p * (1 - p)
+#     mux = 2 * N * s * pq / tanh(2 * N * s * p)
+#     t = 1 / (ploidy * 2 * N)
+#     varx = (pq * t) ^ 0.5
+#     p_prime = p + mux * t
+#     if (runif(1) >= 0.5){
+#       p_prime = p_prime + varx
+#     }
+#     else{
+#       p_prime = p_prime - varx
+#     }
+#     df = rbind(df, c(s, gen, p_prime, ploidy))
+#     print(c(p_prime, gen, mux, t, mux * t, varx))
+#     p = p_prime
+#     gen = gen + 1
+#   }
+#   return(df)
+# }
+# 
+# #Functions to run mssell
+# traj_file = "/Users/pmonnahan/Documents/Research/PloidySim/mssel_output/mssel_input/traj_p4_s0.001_N10000_recessive_rep4-4Alt.txt"
+# traj_file = "/Users/pmonnahan/Documents/Research/PloidySim/testing.txt"
+# 
+# msselRun = function(N, n, traj_file, L = 1000000, mu = 1e-8, r = 1e-8, ploidy = 2, numWindows = 200, slideRate = 0.5, selPos = 0.5, selPop = 2, ms = "/Users/pmonnahan/Documents/Research/code/dmc/mssel_modified/mssel", ms_summarize = "/Users/pmonnahan/Documents/Research/PloidySim/scripts/ms_summarize.R"){ 
+#   options(scipen=999)
+#   p = ploidy
+#   
+#   out1 = str_replace(traj_file, ".txt", ".ms.out")
+#   out2 = str_replace(traj_file, ".txt", ".R.out")
+#   
+#   theta = N * p * mu * L 
+#   rho = N * p * r * L
+#   mig_str = "2 0 40 40 0 -ej 0.2825 2 1"
+#   
+#   args1 = paste((2 * p * n), 1, n * p, n * p, traj_file, L * selPos, "-r", rho, L, "-t", theta, "-I", mig_str)
+#   
+#   args2 = paste(out1, out2, L, numWindows, slideRate, Npops, selPop, n * p, n * p)
+#   print(args1)
+#   print(args2)
+#   system2(ms, args1, stdout = out1)
+# 
+#   system2(ms_summarize, args2)
+#   
+#   new_dat = read.table(out2)
+#   
+#   #change names
+#   return(new_dat)
+#   
+# }
+# 
+# dat = rbind(dat, new_dat)
+# 
+# ## Stochastic simulation of selection for a beneficial allele
+# PloidyForSim = function(ploidy,  N, s, h, start_freq, end_freq, maxGen, maxTries){
+#   
+#   assert_that(ploidy - length(h) == 1)
+#   attempts = 0
+#   
+#   #Sample individuals to reproduce
+#   # taken from https://stats.stackexchange.com/questions/67911/how-to-sample-from-a-discrete-distribution
+#   sampleDist = function(PLOIDY, n, genoFreqs) { 
+#     sample(x = seq(0, PLOIDY), n, replace = T, prob = genoFreqs)
+#   }
+#   
+#   #Initalize population
+#   fits = sort( c(1, 1 + h * s, 1 + s) / (1 + s))
+#   Pop = rbinom(n = N, size = ploidy, prob = start_freq)
+#   p = sum(Pop) / (ploidy * N)
+#   freqs = c(p)
+#   
+#   while(p < end_freq & length(freqs) < maxGen & attempts < maxTries){
+#     #Retry if stochastic loss of beneficial allele in previous generation
+#     if ( p == 0 ){
+#       Pop = rbinom(n = N, size = ploidy, prob = start_freq)
+#       p = sum(Pop) / (ploidy * N)
+#       freqs = c(p)
+#       attempts = attempts + 1
+#     }
+#     
+#     geno_freq = c( table(factor(Pop, levels = as.character(seq(0, ploidy)))) / N )
+#     g_prime = ( fits * geno_freq ) / sum(fits * geno_freq) 
+#     # Make individuals for next generation
+#     p1 = sampleDist(length(g_prime) - 1, N, g_prime)
+#     p2 = sampleDist(length(g_prime) - 1, N, g_prime)
+#     Pop = c()
+#     for (i in 1:N){
+#       g1 = sample(c(rep(0, ploidy - p1[i]), rep(1, p1[i])), ploidy / 2, replace = F)
+#       g2 = sample(c(rep(0, ploidy - p2[i]), rep(1, p2[i])), ploidy / 2, replace = F)
+#       Pop = c(Pop, sum(g1) + sum(g2))
+#     }
+#     p = sum(Pop) / (ploidy * N)
+#     print(p)
+#     freqs = c(freqs, p)
+#   }
+#   return(freqs)
+# }
+# 
+# writeTraj = function(file, traj, numPops, selPops, timeScale, trajName = "rep1"){
+#   gen = seq(1, length(traj) + 1) / timeScale
+#   traj = rev(traj)
+#   traj = c(traj, 0)
+#   anc_traj = rep(0, length(traj))
+#   fileConn = file(file)
+#   # writeLines(c(paste("ntraj:", "1"), paste("npop:", numPops), "", paste("n:", length(traj), trajName), paste(gen, traj, anc_traj), sep="\t"), fileConn)
+#   writeLines(c(paste("ntraj:", "1"), paste("npop:", numPops), paste("n:", length(traj), trajName)), con = fileConn)
+#   
+#   dat = data.frame("gen"=gen, "traj"=traj, "anc"=anc_traj)
+#   print(dat)
+#   write.table(dat, file, quote=F, col.names = F, row.names = F, sep="\t", append=T)
+#   close(fileConn)
+# }
 ```
 
 

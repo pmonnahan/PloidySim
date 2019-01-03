@@ -10,9 +10,8 @@ library(tidyr)
 library(PopGenome)
 library(stringr)
 library(data.table)
-library(foreach)
-library(doParallel)
 library(magrittr)
+library(doParallel)
 library(parallel)
 
 # Read in arguments
@@ -25,23 +24,30 @@ if (length(args)==0) {
 
 outdir = args[1]
 path_to_mssel = args[2]
+dom_idx = args[3]
 num_cores = detectCores()
 
 cl <- makeCluster(num_cores - 1) # Do we need to leave one core to handle the results that are being returned??
 registerDoParallel(cl)
 
 ##### BEGIN: Set parameter values to explore #####
-Ploidy = c(2, 4, 6, 8)
-pop_size = c(1000, 10000, 100000) # Keep this value above 100 and below 1000000 (computation time will increase with increasing pop_size)
+Ploidy = c(2, 4, 8)
+pop_size = c(1000, 10000) # Keep this value above 100 and below 1000000 (computation time will increase with increasing pop_size)
 selection_coeff = c(0.1, 0.01, 0.001) # Keep this between 0 and 1
-dominance = c(0, 0.1, 0.4, 0.5, 0.6, 0.9, 1) #
+
+dominance = c(0.1, 0.4, 0.5, 0.6, 0.9, 1, 0) #
+dominance = dominance[dom_idx]
+
 seq_len = 1000000 # Length of sequence that we will simulate with mssel.  Increasing this value will increase computation time.
 mutation_rate = c(1e-8, 1e-7) # per-base mutation rate; mu
 recomb_rate = c(1e-8, 1e-7) # per-base recombination rate; r
-sampGen = c(1, 100, 1000, 10000)
-fuseTime = c(1, 100, 1000, 10000)
+sampGen = c(1, 1000, 10000)
+fuseTime = c(1, 1000, 10000)
 samp_num = 10 # number of individuals to sample
 num_reps = 5
+num_tries = 100
+max_gens = 9999
+end_freq = 0.99
 
 ##### END: Set parameter values to explore #####
 
@@ -56,7 +62,7 @@ getDomCoefs = function(dom_scalar, ploidy = 100){
     coeffs = rep(1, ploidy - 1)
   }
   else {
-    dom = (1 - dom_scalar) - 0.5
+    dom = (1 - dom_scalar) - 0.5 
     dom = abs((dom * 10 + sign(dom)) ^ sign(dom))
     coeffs = (seq(1, ploidy - 1) / ploidy) ^ dom
   }
@@ -95,11 +101,13 @@ getTraj = function(s, dom_scalar, ploidy, start_freq, N = -9, end_freq = 0.99, m
   }
   if (attempts > maxTries & nrow(df) <= maxGens){
     print(paste("Beneficial allele was lost due to drift for", maxTries, "consecutive attempts"))
-  }
-  if (nrow(df) > maxGens){
+    return(-9)
+  } else if (nrow(df) > maxGens){
     print(paste("Beneficial allele did not fix before the maximum number of generations (", maxGens, ")."))
+    return(-8)
+  } else{
+    return(df[-1,])
   }
-  return(df[-1,])
 }
 
 # Format and write allele frequency trajectory to file for input into mssel
@@ -343,17 +351,28 @@ mssel_parallel = function(j) {
   fuseGen = params[j,]$fuseGen
 
   # Get sweep trajectory
-  new_traj = getTraj(s, dom, traj_ploidy, 0.05, N)$freq
-
-  # Run mssel
-  ms_outfile = paste(outdir, "/tp", traj_ploidy, "_sp", sim_ploidy, "_do", dom, "_se", s, "_NN.", N, "_mu.", mu, "_re.", r, "_sG.", sampGen, "_fG", fuseGen, "_msel.out", sep = "")
-  infile = msselRun(N = N, n = samp_num, trajectory = new_traj, outfile = ms_outfile, L = seq_len, mu = , r = , ploidy = sim_ploidy, ms = path_to_mssel, sampleGen = sampGen, fuseGen = fuseGen)
-
-  # calculate population genetic metrics in sliding windows across simulated region
-  ndat = msselCalc(infile, numWindows = N / 50, rep(sim_ploidy * samp_num, 2), Nsites = seq_len)
-  ndat %<>% mutate(s = s, dom = dom, recomb = r, N = N, mu = mu, sim_ploidy = sim_ploidy, traj_ploidy = traj_ploidy, sampGen = sampGen, fuseGen = fuseGen, rep = j)
-  fin_outfile = paste(outdir, "/tp", traj_ploidy, "_sp", sim_ploidy, "_do", dom, "_se", s, "_NN.", N, "_mu.", mu, "_re.", r, "_sG.", sampGen, "_fG", fuseGen, "_smry.txt", sep = "")
-  write.table(ndat, fin_outfile, row.names = F, quote = F)
+  new_traj = getTraj(s, dom, traj_ploidy, 0.05, N, end_freq, max_gens, num_tries)
+  
+  ms_outfile = paste(outdir, "/tp", traj_ploidy, "_sp", sim_ploidy, "_do", dom, "_se", s, "_NN", N, "_mu", mu, "_re", r, "_sG", sampGen, "_fG", fuseGen, "_rep", j,  "_msel.out", sep = "")
+  fin_outfile = paste(outdir, "/tp", traj_ploidy, "_sp", sim_ploidy, "_do", dom, "_se", s, "_NN", N, "_mu", mu, "_re", r, "_sG", sampGen, "_fG", fuseGen, "_rep", j, "_smry.txt", sep = "")
+  
+  if (new_traj == -9){
+    # print(paste("Beneficial allele was lost due to drift for", num_tries, "consecutive attempts"))
+    print(params[j,])
+  } else if (new_traj == -8){
+    # print(paste("Beneficial allele did not fix before the maximum number of generations (", max_gens, ")."))
+    print(params[j,])
+  } else if (!file_test("-f", fin_outfile)){
+    new_traj = new_traj$freq
+    
+    infile = msselRun(N = N, n = samp_num, trajectory = new_traj, outfile = ms_outfile, L = seq_len, mu = , r = , ploidy = sim_ploidy, ms = path_to_mssel, sampleGen = sampGen, fuseGen = fuseGen)
+  
+    # calculate population genetic metrics in sliding windows across simulated region
+    ndat = msselCalc(infile, numWindows = N / 50, rep(sim_ploidy * samp_num, 2), Nsites = seq_len)
+    ndat %<>% mutate(s = s, dom = dom, recomb = r, N = N, mu = mu, sim_ploidy = sim_ploidy, traj_ploidy = traj_ploidy, sampGen = sampGen, fuseGen = fuseGen, rep = j)
+    
+    write.table(ndat, fin_outfile, row.names = F, quote = F)
+  }
   return()
 }
 

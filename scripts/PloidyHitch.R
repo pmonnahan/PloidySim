@@ -25,6 +25,7 @@ if (length(args)==0) {
 outdir = args[1]
 path_to_mssel = args[2]
 dom_idx = args[3]
+num_tries = args[4]
 num_cores = detectCores()
 
 cl <- makeCluster(num_cores - 1) # Do we need to leave one core to handle the results that are being returned??
@@ -45,7 +46,6 @@ sampGen = c(1, 1000, 10000)
 fuseTime = c(1, 1000, 10000)
 samp_num = 10 # number of individuals to sample
 num_reps = 5
-num_tries = 100
 max_gens = 9999
 end_freq = 0.99
 
@@ -94,6 +94,7 @@ getTraj = function(s, dom_scalar, ploidy, start_freq, N = -9, end_freq = 0.99, m
       df = rbind(df, c(s, dom_scalar, gen, p, dp1, Den, k))
       dp1 = p_prime - p
       p = p_prime
+      cat(p)
       gen = gen + 1
     }
     df = rbind(df, c(s, dom_scalar, gen, p, dp1, Den, k))
@@ -184,8 +185,6 @@ msselCalc <- function(in_file, numWindows, samp_sizes, Nsites, outgroup = 21, sl
     probs <- NaN
     
     ## THE OUTPUT TEXT FOR EACH DRAW SHOULD CONTAIN THE WORD "segsites"
-    
-    
     marker <- grep("segsites", txt)
     
     if(MSMS[1]!=FALSE){ndraws <- length(marker);nsam <- MSMS$nsam} # MSMS
@@ -193,12 +192,8 @@ msselCalc <- function(in_file, numWindows, samp_sizes, Nsites, outgroup = 21, sl
     
     stopifnot(length(marker) == ndraws)
     
-    
-    
-    
     ## GET NUMBERS OF SEGREGATING SITES IN EACH DRAW
     segsites <- sapply(strsplit(txt[marker], split=" "), function(vec) as.integer(vec[2]) )
-    
     
     for(draw in seq(along=marker)) {
       # if(!(draw %% 100)) cat(draw, " ")

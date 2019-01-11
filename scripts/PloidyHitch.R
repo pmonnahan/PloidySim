@@ -23,9 +23,11 @@ if (length(args)==0) {
 } 
 
 outdir = args[1]
-path_to_mssel = args[2]
-dom_idx = args[3]
-num_tries = args[4]
+outfile = args[2]
+path_to_mssel = args[3]
+dom_idx = args[4]
+num_tries = args[5]
+current_df = args[6] # file containing data of most current df of results.  used to keep track of how many reps we've done of each param set
 num_cores = detectCores()
 
 cl <- makeCluster(num_cores - 1) # Do we need to leave one core to handle the results that are being returned??
@@ -327,8 +329,19 @@ msselCalc <- function(in_file, numWindows, samp_sizes, Nsites, outgroup = 21, sl
 ####### Begin: simulate ########
 
 # Generate data table containing parameter sets of interest
-params = expand.grid(traj_ploidy = Ploidy, sim_ploidy = Ploidy, s = selection_coeff, recomb = recomb_rate, sampGen = sampGen, N = pop_size, mu = mutation_rate, sampGen = sampGen, dom = dominance, fuseGen = fuseTime)
+params = expand.grid(traj_ploidy = Ploidy, sim_ploidy = Ploidy, s = selection_coeff, recomb = recomb_rate, N = pop_size, mu = mutation_rate, sampGen = sampGen, dom = dominance, fuseGen = fuseTime)
 params %<>% dplyr::slice(rep(row_number(), num_reps))
+
+params %<>% group_by(traj_ploidy, sim_ploidy, s, recomb, sampGen, N, mu, sampGen, dom, fuseGen) %>% mutate(rep = 1:n())
+
+if (cdf != -9){
+cdf = read.table(current_df, head = T)
+
+done = cdf %>% select(s,dom, recomb, N, mu, sim_ploidy , traj_ploidy, sampGen, fuseGen, rep) %>% distinct() 
+
+params %<>% anti_join(., done)
+
+}
 
 # Run mssel in parallel for all parameter sets in params
 
@@ -344,12 +357,13 @@ mssel_parallel = function(j) {
   r = params[j,]$recomb
   sampGen = params[j,]$sampGen
   fuseGen = params[j,]$fuseGen
+  rep = params[j,]$rep
 
   # Get sweep trajectory
   new_traj = getTraj(s, dom, traj_ploidy, 0.05, N, end_freq, max_gens, num_tries)
   
-  ms_outfile = paste(outdir, "/tp", traj_ploidy, "_sp", sim_ploidy, "_do", dom, "_se", s, "_NN", N, "_mu", mu, "_re", r, "_sG", sampGen, "_fG", fuseGen, "_rep", j,  "_msel.out", sep = "")
-  fin_outfile = paste(outdir, "/tp", traj_ploidy, "_sp", sim_ploidy, "_do", dom, "_se", s, "_NN", N, "_mu", mu, "_re", r, "_sG", sampGen, "_fG", fuseGen, "_rep", j, "_smry.txt", sep = "")
+  ms_outfile = paste(outdir, "/tp", traj_ploidy, "_sp", sim_ploidy, "_do", dom, "_se", s, "_NN", N, "_mu", mu, "_re", r, "_sG", sampGen, "_fG", fuseGen, "_rep", rep,  "_msel.out", sep = "")
+  fin_outfile = paste(outdir, "/tp", traj_ploidy, "_sp", sim_ploidy, "_do", dom, "_se", s, "_NN", N, "_mu", mu, "_re", r, "_sG", sampGen, "_fG", fuseGen, "_rep", rep, "_smry.txt", sep = "")
   
   if (new_traj == -9){
     # print(paste("Beneficial allele was lost due to drift for", num_tries, "consecutive attempts"))
@@ -357,23 +371,24 @@ mssel_parallel = function(j) {
   } else if (new_traj == -8){
     # print(paste("Beneficial allele did not fix before the maximum number of generations (", max_gens, ")."))
     print(params[j,])
-  } else if (!file_test("-f", fin_outfile)){
+  } else {
     new_traj = new_traj$freq
     
     infile = msselRun(N = N, n = samp_num, trajectory = new_traj, outfile = ms_outfile, L = seq_len, mu = , r = , ploidy = sim_ploidy, ms = path_to_mssel, sampleGen = sampGen, fuseGen = fuseGen)
   
     # calculate population genetic metrics in sliding windows across simulated region
     ndat = msselCalc(infile, numWindows = N / 50, rep(sim_ploidy * samp_num, 2), Nsites = seq_len)
-    ndat %<>% mutate(s = s, dom = dom, recomb = r, N = N, mu = mu, sim_ploidy = sim_ploidy, traj_ploidy = traj_ploidy, sampGen = sampGen, fuseGen = fuseGen, rep = j)
+    ndat %<>% mutate(s = s, dom = dom, recomb = r, N = N, mu = mu, sim_ploidy = sim_ploidy, traj_ploidy = traj_ploidy, sampGen = sampGen, fuseGen = fuseGen, rep = rep)
     
-    write.table(ndat, fin_outfile, row.names = F, quote = F)
+    # write.table(ndat, fin_outfile, row.names = F, quote = F)
   }
-  return()
+  return(ndat)
 }
 
 # Call to parallel
-mclapply(1:nrow(params), FUN = mssel_parallel, mc.cores= num_cores)
+dat = mclapply(1:nrow(params), FUN = mssel_parallel, mc.cores= num_cores)
 
+write.table(dat, paste(outdir, outfile), row.names=F, quote=F)
 ####### END: simulate ########
 
 

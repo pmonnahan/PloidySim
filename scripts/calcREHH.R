@@ -9,13 +9,15 @@ library(parallel)
 library(stringr)
 library(doParallel)
 
+# Read in arguments
+args = commandArgs(trailingOnly=TRUE)
 
-
-ms_outdir_path = "/Users/pmonnahan/Documents/Research/PloidySim/rehh/mssel_o/"
-outfile = "/Users/pmonnahan/Documents/Research//PloidySim/rehh_calcs.csv"
+ms_outdir_path = args[1]
+outfile = args[2]
 files <- list.files(path = ms_outdir_path, pattern = "*.out", full.names=TRUE, recursive=FALSE)
 
 num_cores=4
+# cl = makeCluster(num_cores - 1, outfile=paste(ms_outdir_path,".log"))
 cl = makeCluster(num_cores - 1, outfile="")
 registerDoParallel(cl)
 
@@ -240,9 +242,8 @@ RE.input = function(ms_file, jit_amt = 1){
 }
 
 calcHAP = function(HapPaths){
-  
-  hh1 = data2haplohh(HapPaths[1], HapPaths[3]) #Import data
-  hh2 = data2haplohh(HapPaths[2], HapPaths[3])
+  invisible(capture.output(hh1 <- data2haplohh(HapPaths[1], HapPaths[3]))) #Import data
+  invisible(capture.output(hh2 <- data2haplohh(HapPaths[2], HapPaths[3])))
   ss1 = scan_hh(hh1) #Calc iHH and iES
   ss2 = scan_hh(hh2)
   
@@ -326,16 +327,41 @@ rehh_parallel = function(j, delete=TRUE) {
 #   }
 # }
 
+info = file.info(files)
+empty = rownames(info[info$size == 0, ])
+files = files[!files %in% empty]
+
 dat = foreach(i = 1:(length(files)), .combine=rbind, 
-        .packages=c('rio','rehh','readr','dplyr','inline','stringr','magrittr'),.export=c("calcHAP","RE.input")) %dopar% {
-        print(paste(i," of ",length(files),"; ", i/length(files)*100, "% complete", sep = ''))
-        paths = RE.input(files[i])
-        invisible(capture.output(out <- calcHAP(paths)))
-        params = str_split(files[i],"_")[[1]]
-        out %<>% mutate(traj_ploidy = params[2], sim_ploidy = params[3], dom = params[4], s = params[5], N = params[6], mu = params[7], recomb = params[8], sampGen = params[9], fuseGen = params[10], rep = params[11])
-        out
+        .packages=c('rio','rehh','readr','dplyr','inline','stringr','magrittr'),.export=c("calcHAP","RE.input"), .errorhandling="remove") %dopar% {
+        print(paste(i," of ",length(files),"; ", round(i/length(files)*100, 2), "% complete", sep = ''))
+        params = str_split(basename(files[i]),"_")[[1]]
+        paths = tryCatch({
+            RE.input(files[i])
+          },
+          error = function(e){
+            message("Error: RE.input")
+            message(paths)
+            return(NULL)
+          })
+        
+        if (!is.null(paths)){
+          out = tryCatch({calcHAP(paths)
+            },
+            error = function(e){
+              message("Error: calcHAP")
+              message(paths[3])
+              return(NULL)
+            })
         }
-stopCluster(cl)
+        if (!is.null(out)){
+          out %<>% mutate(traj_ploidy = params[1], sim_ploidy = params[2], dom = params[3], s = params[4], N = params[5], mu = params[6], recomb = params[7], sampGen = params[8], fuseGen = params[9], rep = params[10])
+          file.remove(paths)
+          out
+        }  
+        }
+print(warnings())
+stopImplicitCluster()
+
 write.csv(dat, outfile, quote=F, row.names = F)
 
 # FF = RE.input(ms_file)

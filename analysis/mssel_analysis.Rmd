@@ -1,0 +1,250 @@
+---
+title: "Mssel_analysis"
+author: "Patrick Monnahan"
+date: "12/27/2018"
+output: html_document
+---
+
+## Load packages and import data
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(assertthat)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(PopGenome)
+library(stringr)
+library(data.table)
+library(magrittr)
+library(wrapr)
+
+ms2 = read.table("~/Documents/Research/PloidySim/data/mssel_out_2-24-19_fin.txt", head = T)
+
+#Group windows into larger sets
+ms2 %<>% mutate(ints = as.numeric(as.character(cut(bp.start, breaks = 50, labels = seq(1,50)))))
+
+```
+
+#Background
+
+## Dominance scalar
+This plot shows the dominance value of each genotype (given by within individual allele frequency) as a funciton of the dominance scalar
+```{r}
+getDomCoefs = function(dominance, ploidy = 100){
+  if (dominance == 0){
+    coeffs = rep(0, ploidy - 1)
+  }
+  else if (dominance == 1){
+    coeffs = rep(1, ploidy - 1)
+  }
+  else {
+    dom = (1 - dominance) - 0.5
+    dom = abs((dom * 10 + sign(dom)) ^ sign(dom))
+    coeffs = (seq(1, ploidy - 1) / ploidy) ^ dom
+  }
+  return(coeffs)
+}
+
+doms = c(seq(0,1, 0.1))
+Doms = as.data.frame(sapply(doms, getDomCoefs))
+Doms = rbind(c(0,0,0,0,0,0,0), Doms, c(1,1,1,1,1,1,1))
+colnames(Doms) = doms
+Doms = cbind(Doms, data.frame("i/k"=seq(0,100) / 100))
+mDoms = melt(Doms, id.var = "i.k")
+ggplot(mDoms, aes(x = i.k, y = value, color = variable)) + geom_line() + scale_color_discrete(name = "Dominance\nScalar") + theme_bw() + xlab("i / k") + ylab("Dominance Coefficient")
+```
+
+## Allele frequency trajectories based on deterministic recursion equations
+```{r}
+#Function creates trajectories
+getTraj = function(s, dom, ploidy, start_freq, N = -9, end_freq = 0.99, maxGens = 9999, maxTries = 10){
+  dom_coeffs = getDomCoefs(dom, ploidy)
+  attempts = 0
+  p = start_freq
+  k = ploidy
+  gen = 0
+  while (attempts <= maxTries & p < end_freq & gen <= maxGens){
+    df = data.frame("s" = s, "dom" = dom, "gen" = 0, "freq" = start_freq, "dp1" = 0, "w.bar" = 0, "ploidy" = ploidy)
+    p = start_freq
+    dp1 = 0
+    gen = 0
+    het_fits = 1 + dom_coeffs * s
+    fits = c(1, het_fits, 1 + s) / (1 + s)
+    while (p < end_freq & p > 0 & gen <= maxGens){
+      q = 1 - p
+      i = seq(0, k)
+      Num = sum(choose(k, i) * ((k - i) / k) * (p ^ (k - i)) * (q ^ i) * rev(fits))
+      Den = sum(choose(k, i) * (p ^ (k - i)) * (q ^ i) * rev(fits))
+      p_prime = Num / Den
+      if (N != -9){
+        p_prime = sum(rbinom(N, k, p_prime)) / (k * N) 
+      }
+      df = rbind(df, c(s, dom, gen, p, dp1, Den, k))
+      dp1 = p_prime - p
+      p = p_prime
+      gen = gen + 1
+    }
+    df = rbind(df, c(s, dom, gen, p, dp1, Den, k))
+    attempts = attempts + 1
+  }
+  if (attempts > maxTries & nrow(df) <= maxGens){
+    print(paste("Beneficial allele was lost due to drift for", maxTries, "consecutive attempts"))
+  }
+  if (nrow(df) > maxGens){
+    print(paste("Beneficial allele did not fix before the maximum number of generations (", maxGens, ")."))
+  }
+  return(df[-1,])
+}
+
+# Param set to create trajectories for
+params = data.frame("s" = rep(0.1,9), "dom" = c(rep(0.5,3), rep(0,3), rep(1,3)), "ploidy" = rep(c(2,4,8),3), "start" = rep(0.05, 9))
+
+# Create trajectories
+dat1 = foreach(i = 1:nrow(params), .combine=rbind) %do% {
+  getTraj(params[i,]$s, params[i,]$dom, params[i,]$ploidy, params[i,]$start)
+}
+
+#plot
+ggplot(dat1, aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_color_discrete(name="Ploidy") + scale_linetype_discrete(name="Dominance Scalar", labels=c("0.1", "0.5", "0.9")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency")
+```
+
+## Fitness values as a function of frequency
+```{r}
+getFits = function(s, dom, ploidy){
+  dom_coeffs = getDomCoefs(dom, ploidy)
+  k = ploidy
+  dat = foreach(i = 1:51, .combine=rbind) %do% {
+    p = seq(0,1,1/50)[i]
+    q = 1 - p
+    het_fits = 1 + dom_coeffs * s
+    fits = c(1, het_fits, 1 + s) / (1 + s)
+    i = seq(0, k)
+    freqs = choose(k, i) * (p ^ (k - i)) * (q ^ i)
+    w.bar = sum(freqs * rev(fits))
+    var.w = sum((freqs * (rev(fits) - w.bar) ^ 2) / length(freqs))
+    data.frame('s' = s, 'dom' = dom, 'ploidy' = ploidy, 'freq' = p, 'w.bar' = w.bar, 'var.w' = var.w)
+  }
+  return(dat)
+}
+
+dat2 = foreach(i = 1:nrow(params), .combine=rbind) %do% {
+  getFits(params[i,]$s, params[i,]$dom, params[i,]$ploidy)
+}
+
+ggplot(dat2, aes(x=freq, y=var.w, color = as.factor(ploidy), linetype=as.factor(dom))) + geom_line() + scale_color_discrete(name="Ploidy") + scale_linetype_discrete(name="Dominance", labels=c("0.1","0.5","0.9")) + xlab("Allele Frequency") + ylab("Variance in Fitness") + theme_bw()
+
+ggplot(dat2, aes(x=freq, y=w.bar, color = as.factor(ploidy), linetype=as.factor(dom))) + geom_line() + scale_color_discrete(name="Ploidy") + scale_linetype_discrete(name="Dominance", labels=c("0.1","0.5","0.9")) + xlab("Allele Frequency") + ylab("Mean Fitness") + theme_bw()
+```
+
+
+## Variable key
+N = Population size
+s = selection coefficient; difference in fitness between alternative homozygotes
+dom = dominance scalar; Run below chunk for meaning
+recomb = per-base mutation rate
+mu = per-base mutation rate.  Theta is ploidy x mu x N (x sequence length which is 1Mb)
+sim_ploidy = ploidy used for mssel simulation.  Value used in calculating theta above
+traj_ploidy = ploidy used to generate sweep trajectory.  see getTraj() function in PloidyHitch.R
+sampGen = number of generations passed since selection ends (i.e. fixation of beneficial allele)
+fuseGen = number of generations prior to start of sweep that the two populations fused.
+
+
+## Summary of depth and breadth of peaks
+Controlling for number of chromosomes in the population (i.e. Simulation Ploidy), higher ploidies have a shallower dip, due to the slowed rate of fixation of the sweeping allele. 
+Similarly, the dips in diversity are narrower in higher ploidies for same reason as before. 
+```{r}
+MS2.a = ms2 %>% group_by(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, rep) %>% summarize(depth = (mean(Pi.2,na.rm=T) - min(Pi.1)) / mean(Pi.2,na.rm=T))
+
+MS2.a %>% filter(fuseGen == 1 & mu==1e-08 & N == 10000 & recomb=="1e-08" & s =="0.01") %>% ggplot(., aes(y=-(log(depth)), fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy))) + geom_boxplot() + ylab(expression(paste("Dip Depth = min(", pi[1], ") / ",pi[2],sep = ""))) + facet_grid(~sampGen) + scale_y_log10() + scale_fill_discrete(name = "Trajectory\nPloidy") + xlab("Simulation Ploidy") + theme_bw()
+
+MS2.b = ms2 %>% group_by(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, rep, ints) %>% summarize(lessWind = ifelse(mean(Pi.1, na.rm=T) < (mean(Pi.2, na.rm=T) / 2),1,0))
+
+MS2.c = MS2.b %>% group_by(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, rep) %>% summarize(breadth = sum(lessWind) * 20000)
+
+MS2.c %>% filter(fuseGen == 1 & mu==1e-08 & N == 10000 & recomb=="1e-08" & s =="0.01") %>% ggplot(., aes(y=breadth/1000, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy))) + geom_boxplot(notch=T) + ylab(expression(paste("Dip Breadth = Length (kb) of which ", pi[1], " < (",pi[2], " / 2)",sep = ""))) + facet_grid(~sampGen, labeller = label_both) + scale_fill_discrete(name = "Trajectory\nPloidy") + xlab("Simulation Ploidy") + theme_bw()
+
+MS2.c %>% filter(fuseGen == 1 & mu==1e-08 & N == 10000 & recomb=="1e-08" & s =="0.01") %>% ggplot(., aes(y=breadth/1000, fill = as.factor(sampGen), x = as.factor(sim_ploidy))) + geom_boxplot(notch=T) + ylab(expression(paste("Dip Breadth = Length (1 kb) of which ", pi[1], " < (",pi[2], " / 2)",sep = ""))) + scale_y_log10() + scale_fill_discrete(name = "Generations prior\nto fixation") + xlab("Simulation Ploidy") + theme_bw()
+
+# # Look for proportional difference in breadth/depth within a simul
+# MS2.a %>% filter(fuseGen == 1 & mu==1e-08 & traj_ploidy == 4 & N == 10000 & recomb=="1e-08" & s =="0.01") %>% ggplot(., aes(y=depth, fill = as.factor(sampGen), x = as.factor(sim_ploidy))) + geom_boxplot(notch=T) + ylab(expression(paste("Dip Breadth = Length of which ", pi[1], " < (",pi[2], " / 2)",sep = "")))+ scale_fill_discrete(name = "Trajectory\nPloidy") + xlab("Simulation Ploidy") + theme_bw()
+```
+
+## Combined effects of factor of two and trajectory
+Higher ploidies result in deeper and broader dips in diversity relative to diploids.  The effect of recombination rate is not striking.
+```{r}
+ms2 %>% filter(dom %in% c("0.1","0.9","0.5") & fuseGen == 1 & sampGen ==1 & mu==1e-08 & N == 10000 & sim_ploidy == traj_ploidy) %>% ggplot(., aes(y=Pi.1 * 100, color = as.factor(traj_ploidy), x = mid/100000)) + geom_smooth(method="loess", size =0.5, span=0.1, se=F) + scale_x_continuous(breaks=c(1,5,9)) + scale_y_continuous(breaks=c(0.05,0.15)) + xlab("Position (100 kb)") + ylab("Diversity (%)") + scale_color_discrete(name="Ploidy") + facet_grid(vars(recomb,s), vars(dom),labeller = label_both) + theme_bw()
+```
+
+## Trajectory effect
+Here, we are keeping fixed the ploidy specified for the coalescent simulations (fixed at 8 in this example), and we are varying the ploidy under which the sweep trajectories are simulated.  For some parameter sets, higher ploidies and thus slower sweeps results in a visible difference in terms of the reduction of diversity at and around the beneficial allele.  The effect is more pronounced for weaker selection and for partial dominance/recessivity.  The breadth of the dips is also notably lesser for higher ploidies.  Thus, if chromosome number in a population is held constant, higher ploidies exhibit reduced signals associated with selective sweeps.
+```{r}
+ms2 %>% filter(dom %in% c("0.1","0.9","0.5") & N == 10000 & fuseGen == 1 & sampGen ==1 & mu==1e-08 & sim_ploidy == 8) %>% ggplot(., aes(y=Pi.1 * 100, color = as.factor(traj_ploidy), x = mid/100000)) + geom_smooth(method="loess", size =0.5, span=0.1, se=F) + scale_x_continuous(breaks=c(1,5,9)) + xlab("Position (100 kb)") + ylab("Diversity (%)") + scale_color_discrete(name="Trajectory\nPloidy") + facet_grid(vars(s, recomb), vars(dom),labeller = label_both, scales = "free_y") + theme_bw()
+```
+
+
+## Factor of 2 effect
+This is the complement to the previous figure.  We use the same sweep trajectory, but we vary the ploidy specified for the coalescent simulation.  
+```{r}
+
+ms2 %>% filter(dom %in% c("0.1","0.9","0.5") & fuseGen == 1 & sampGen ==1 & mu==1e-08 & N == 10000 & traj_ploidy == 4) %>% ggplot(., aes(y=Pi.1 * 100, color = as.factor(sim_ploidy), x = mid/100000)) + geom_smooth(method="loess", size =0.5, span=0.1, se=F) + scale_x_continuous(breaks=c(1,5,9)) + scale_y_continuous(breaks=c(0.05,0.15)) + xlab("Position (100 kb)") + ylab("Diversity (%)") + scale_color_discrete(name="Simulation\nPloidy") + facet_grid(vars(recomb,s), vars(dom),labeller = label_both) + theme_bw()
+
+```
+
+
+## Effect of sample generation on Taj D.  Polyploids recover new mutations more quickly, but they take longer to drift to higher frequencies.  ThetaW goes up but ThetaPi lags...
+```{r}
+ms2 %>% filter(dom %in% c("0.1","0.9","0.5") & s==0.01 & fuseGen == 1 & mu==1e-08 & N == 10000 & sim_ploidy == traj_ploidy & recomb == 1e-08) %>% ggplot(., aes(y=Tajima.D_1, color = as.factor(sim_ploidy), x = mid/100000)) + geom_smooth(method="loess", size =0.5, span=0.1, se=F) + scale_x_continuous(breaks=c(1,5,9)) + xlab("Position (100 kb)") + ylab("Tajima's D") + scale_color_discrete(name="Ploidy") + facet_grid(vars(sampGen), vars(dom),labeller = label_both) + theme_bw()
+
+ms2 %>% filter(dom == "0.5" & s==0.01 & fuseGen == 1 & mu==1e-08 & N == 10000 & recomb == 1e-08) %>% ggplot(., aes(y=Tajima.D_1, color = as.factor(sim_ploidy), x = mid/100000)) + geom_smooth(method="loess", size =0.5, span=0.1, se=F) + scale_x_continuous(breaks=c(1,5,9)) + xlab("Position (100 kb)") + ylab("Tajima's D") + scale_color_discrete(name="Ploidy") + facet_grid(vars(sampGen), vars(traj_ploidy),labeller = label_both) + theme_bw()
+```
+
+## Effect of sample generation on Fst.  
+Neutral divergence in allele frequencies increases Fst more quickly in lower ploidies, thus erasing 'outlier' signal due to sweep
+```{r}
+ms2 %>% filter(dom %in% c("0.1","0.9","0.5") & s==0.01 & fuseGen == 1 & mu==1e-08 & N == 10000 & sim_ploidy == traj_ploidy & recomb == 1e-08) %>% ggplot(., aes(y=fst, color = as.factor(sim_ploidy), x = mid/100000)) + geom_smooth(method="loess", size =0.5, span=0.1, se=F) + scale_x_continuous(breaks=c(1,5,9)) + xlab("Position (100 kb)") + ylab("Fst") + scale_color_discrete(name="Ploidy") + facet_grid(vars(sampGen), vars(dom),labeller = label_both) + theme_bw()
+```
+
+##Analysis of rehh calculations
+###Import Data
+```{r}
+traj.ehh = read.csv("~/Documents/Research/PloidySim/rehh/rehh_calcs_sp2_se0.01.csv")
+fact.ehh = read.csv("~/Documents/Research/PloidySim/rehh/rehh_calcs_do0.5_fG1_DS.csv")
+```
+
+###Trajectory effect on xp-ehh (colors) 
+```{r}
+traj.ehh %>% filter(fuseGen=="fG1" & sampGen=="sG1" & recomb == "re1e-08" & dom=="do0.5" & N=="NN10000") %>% ggplot(.,aes(x=POSITION / 100000,y=xpehh.p,color=traj_ploidy)) + geom_smooth(method="loess", span=0.1, se = F) + scale_color_discrete(name="Trajectory\nPloidy", breaks=c("tp2","tp4","tp8"), labels=c("2","4","8")) + xlab("Position (100 kb)") + ylab(expression("-log"[10]*"(p-value)")) + theme_bw()
+
+# fact.ehh %>% filter(sim_ploidy=="sp8" & fuseGen=="fG1" & sampGen=="sG1" & recomb == "re1e-08" & dom=="do0.5" & N=="NN10000") %>% ggplot(.,aes(x=POSITION / 100000,y=xpehh.p,color=traj_ploidy)) + geom_smooth(method="loess", span=0.1, se = F) + scale_color_discrete(name="Trajectory\nPloidy", breaks=c("tp2","tp4","tp8"), labels=c("2","4","8")) + xlab("Position (100 kb)") + ylab(expression("-log"[10]*"(p-value)")) + theme_bw()
+```
+
+###Factor of two effect on xp-ehh for different trajectory ploidies
+That is, trajectory ploidy is constant within each panel, while simulation ploidy is varied.  Higher diversity in higher ploidies produces stronger signal due to greater deviation from baseline genomic diversity.  
+
+Something strange here though...why is p value always highest when tp=sp?
+Maybe look at density of NA along chromosomes?
+```{r}
+# fact.ehh %>% filter(traj_ploidy == "tp4" & fuseGen=="fG1" & dom=="do0.5" & N=="NN10000" & recomb=="re1e-08" & sampGen=="sG1") %>% ggplot(.,aes(x=cut_interval(x=POSITION, n=50),y=xpehh.p,fill=sim_ploidy)) + geom_boxplot() + facet_grid(cols = vars(sampGen))
+
+fact.ehh %>% filter(s == "se0.01" & fuseGen=="fG1" & recomb == "re1e-08" & dom=="do0.5" & N=="NN10000") %>% ggplot(.,aes(x=POSITION / 100000, y=nocalc, color=sim_ploidy)) + geom_smooth(method="loess", span=0.1, se = F) + scale_color_discrete(name="Simulation\nPloidy", breaks=c("sp2","sp4","sp8"), labels=c("2","4","8"))  + facet_grid(cols = vars(traj_ploidy), rows = vars(sampGen))  + xlab("Position (100 kb)") + ylab(expression("-log"[10]*"(p-value)")) + theme_bw()
+
+```
+
+###Effect of sample generation for each ploidy.  Does signal decay faster in higher or lower ploidies?
+```{r}
+fact.ehh %>% filter(s == "se0.01" & fuseGen=="fG1" & dom=="do0.5" & N=="NN10000" & recomb=="re1e-08") %>% ggplot(.,aes(x=POSITION,y=xpehh.p,color=sim_ploidy)) + geom_smooth() + facet_grid(rows = vars(traj_ploidy), cols = vars(sampGen))
+```
+
+# Less interesting analyses
+
+## Effect of sample generation
+Sample generation is the number of generations following a sweep at which sampling occurs
+```{r} 
+ms2 %>% filter(dom %in% c("0.1","0.9","0.5") & s==0.01 & fuseGen == 1 & mu==1e-08 & N == 10000 & recomb == 5e-08 & sim_ploidy == traj_ploidy) %>% ggplot(., aes(y=Pi.1 * 100, color = as.factor(sim_ploidy), x = mid/100000)) + geom_smooth(method="loess", size =0.5, span=0.1, se=F) + scale_x_continuous(breaks=c(1,5,9)) + scale_y_continuous(breaks=c(0.05,0.15)) + xlab("Position (100 kb)") + ylab("Diversity (%)") + scale_color_discrete(name="Simulation\nPloidy") + facet_grid(vars(sampGen), vars(dom),labeller = label_both) + theme_bw()
+```
+
+## Effect of population size
+Nothing really interesting here...Smaller population size seems noisier as expected
+```{r}
+ms2 %>% filter(dom %in% c("0.1","0.9","0.5") & recomb=="1e-08" & fuseGen == 1 & sampGen ==1 & mu==1e-08 & sim_ploidy == traj_ploidy) %>% ggplot(., aes(y=Pi.1 * 100, color = as.factor(traj_ploidy), x = mid/100000)) + geom_smooth(method="loess", size =0.5, span=0.1, se=F) + scale_x_continuous(breaks=c(1,5,9)) + xlab("Position (100 kb)") + ylab("Diversity (%)") + scale_color_discrete(name="Ploidy") + facet_grid(vars(s, N), vars(dom),labeller = label_both, scales = "free_y") + theme_bw()
+```

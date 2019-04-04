@@ -14,6 +14,7 @@ args = commandArgs(trailingOnly=TRUE)
 
 ms_outdir_path = args[1]
 outfile = args[2]
+downsample = 20
 files <- list.files(path = ms_outdir_path, pattern = "*.out", full.names=TRUE, recursive=FALSE)
 
 num_cores=4
@@ -224,7 +225,7 @@ parse_ms <- function(x, include_seeds=FALSE) {
   out
 }
 
-RE.input = function(ms_file, jit_amt = 1){
+RE.input = function(ms_file, num_chrom, jit_amt = 1){
   bb = read_lines(ms_file)
   aa = bb %>% parse_ms()
   haps = as.numeric(str_split(bb[1]," ")[[1]][2])
@@ -234,8 +235,8 @@ RE.input = function(ms_file, jit_amt = 1){
   hap_file2 = str_replace(ms_file,"[.]out",".hap2") #population 2 - nonsweep
   map_file = str_replace(ms_file,"[.]out",".map")
   
-  write.table(aa$gametes[[1]][1:(haps/2),1:aa$segsites] + 1, hap_file1, col.names = F)
-  write.table(aa$gametes[[1]][((haps/2) + 1):haps,1:aa$segsites] + 1, hap_file2, col.names = F)
+  write.table(aa$gametes[[1]][sample(1:(haps/2), num_chrom),1:aa$segsites] + 1, hap_file1, col.names = F)
+  write.table(aa$gametes[[1]][sample(((haps/2) + 1):haps, num_chrom),1:aa$segsites] + 1, hap_file2, col.names = F)
   
   write.table(data.frame("snp" = seq(1,aa$segsites), "chr" = rep("1",aa$segsites), "pos" = sort(ceiling(jitter(aa$positions[[1]] * L, amount = jit_amt))), "anc" = rep(1, aa$segsites), "der" = rep(2, aa$segsites)), map_file, col.names = F, row.names = F)
   return(c(hap_file1, hap_file2, map_file))
@@ -336,7 +337,7 @@ dat = foreach(i = 1:(length(files)), .combine=rbind,
         print(paste(i," of ",length(files),"; ", round(i/length(files)*100, 2), "% complete", sep = ''))
         params = str_split(basename(files[i]),"_")[[1]]
         paths = tryCatch({
-            RE.input(files[i])
+            RE.input(files[i], downsample)
           },
           error = function(e){
             message("Error: RE.input")
@@ -355,7 +356,7 @@ dat = foreach(i = 1:(length(files)), .combine=rbind,
         }
         if (!is.null(out)){
           out %<>% mutate(traj_ploidy = params[1], sim_ploidy = params[2], dom = params[3], s = params[4], N = params[5], mu = params[6], recomb = params[7], sampGen = params[8], fuseGen = params[9], rep = params[10])
-          file.remove(paths)
+          # file.remove(paths)
           out
         }  
         }

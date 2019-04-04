@@ -5,6 +5,7 @@
 
 # Load required packages
 library(assertthat)
+library(plyr)
 library(dplyr)
 library(tidyr)
 library(PopGenome)
@@ -13,6 +14,8 @@ library(data.table)
 library(magrittr)
 library(doParallel)
 library(parallel)
+library(inline)
+library(wrapr)
 
 # Read in arguments
 args = commandArgs(trailingOnly=TRUE)
@@ -25,35 +28,185 @@ if (length(args)==0) {
 outdir = args[1]
 outfile = args[2]
 path_to_mssel = args[3]
-dom_idx = args[4]
-num_tries = args[5]
+dom_idx = as.numeric(args[4])
+num_tries = as.numeric(args[5])
 current_df = args[6] # file containing data of most current df of results.  used to keep track of how many reps we've done of each param set
-num_cores = detectCores()
+recomb_rate = as.numeric(args[7]) # per-base recombination rate; r
+num_reps = as.numeric(args[8])
+num_cores = detectCores() - 2
 
-cl <- makeCluster(num_cores - 1) # Do we need to leave one core to handle the results that are being returned??
-registerDoParallel(cl)
+#make tmpdir
+tmpdir = paste(outdir,"/tmp", round(runif(1, 5000,1000000000)), sep="")
+dir.create(tmpdir, showWarnings = FALSE)
+setwd(tmpdir)
+
+# cl <- makeCluster(num_cores) # Do we need to leave one core to handle the results that are being returned??
+# registerDoParallel(cl)
 
 ##### BEGIN: Set parameter values to explore #####
 Ploidy = c(2, 4, 8)
 pop_size = c(1000, 10000) # Keep this value above 100 and below 1000000 (computation time will increase with increasing pop_size)
-selection_coeff = c(0.1, 0.01, 0.001) # Keep this between 0 and 1
+selection_coeff = c(0.1, 0.01) # Keep this between 0 and 1
 
 dominance = c(0.1, 0.4, 0.5, 0.6, 0.9, 1, 0) #
 dominance = dominance[dom_idx]
 
 seq_len = 1000000 # Length of sequence that we will simulate with mssel.  Increasing this value will increase computation time.
-mutation_rate = c(1e-8, 1e-7) # per-base mutation rate; mu
-recomb_rate = c(1e-8, 1e-7) # per-base recombination rate; r
+mutation_rate = c(1e-8) # per-base mutation rate; mu
 sampGen = c(1, 1000, 10000)
 fuseTime = c(1, 1000, 10000)
 samp_num = 10 # number of individuals to sample
-num_reps = 5
 max_gens = 9999
 end_freq = 0.99
 
 ##### END: Set parameter values to explore #####
 
 ####### Begin: Define Functions ##########
+read.ms.output <- function( txt=NA, file.ms.output=NA,MSMS=FALSE) {
+  
+  if( !is.na(file.ms.output) ) txt <- scan(file=file.ms.output,
+                                           what=character(0), sep="\n", quiet=TRUE)
+  if( is.na(txt[1]) ){
+    print("Usage: read.ms.output(txt), or read.ms.output(file=filename)")
+    return()
+  }
+  
+  
+  if(MSMS[1]==FALSE){
+    nsam   <- as.integer(strsplit(txt[1], split=" ")[[1]][2] )
+    ndraws <- as.integer(strsplit(txt[1], split=" ")[[1]][3] )
+  }
+  
+  #print(strsplit(txt[1], split=" "))
+  
+  h         <- numeric()
+  result    <- list()
+  gamlist   <- list()
+  positions <- list()
+  
+  #marker <- grep("prob",txt)
+  #probs <- sapply(strsplit(txt[marker], split=":"), function(vec) as.numeric(vec[2]))
+  #marker <- grep("time",txt)
+  #times <- sapply(strsplit(txt[marker], split="\t"), function(vec){ as.numeric(vec[2:3])} )
+  times <- NaN
+  probs <- NaN
+  
+  ## THE OUTPUT TEXT FOR EACH DRAW SHOULD CONTAIN THE WORD "segsites"
+  
+  
+  marker <- grep("segsites", txt)
+  
+  if(MSMS[1]!=FALSE){ndraws <- length(marker);nsam <- MSMS$nsam} # MSMS
+  
+  
+  stopifnot(length(marker) == ndraws)
+  
+  
+  
+  
+  ## GET NUMBERS OF SEGREGATING SITES IN EACH DRAW
+  segsites <- sapply(strsplit(txt[marker], split=" "), function(vec) as.integer(vec[2]) )
+  
+  
+  for(draw in seq(along=marker)) {
+    # if(!(draw %% 100)) cat(draw, " ")
+    if(segsites[draw] > 0) {
+      tpos <- strsplit(txt[marker[draw]+1], split=" ")
+      positions[[draw]] <- as.numeric( tpos[[1]][ 2:(segsites[draw]+1) ] )
+      
+      haplotypes <- txt[(marker[draw] + 2):(marker[draw] + 2 + nsam - 1)]
+      
+      haplotypes <- strsplit(haplotypes, split="")
+      
+      h <- sapply(haplotypes, function(el) c(as.integer(el)))
+      
+      ## IF THERE'S 1 SEGREGATING SITE, THIS WON'T BE A MATRIX 
+      
+      if(segsites[draw] == 1) h <- as.matrix(h)
+      ## OTHERWISE, IT NEEDS TO BE TRANSPOSED
+      else h <- t(h)
+      
+      
+    }
+    else {
+      h <- matrix(nrow=nsam, ncol=0)
+      positions[[draw]] <- NA	
+    }
+    
+    gamlist[[draw]] <- h
+    stopifnot(all(dim(h) == c(nsam, segsites[draw]))) 
+  }
+  
+  list(segsites=segsites, gametes=gamlist, probs=probs, times=t(times), positions=positions, nsam=nsam, nreps=ndraws ) 
+}
+
+readMS2 <- function(file, big.data=FALSE){
+  dirname =  paste("SwapMS", round(runif(1, 5000,1000000000)), sep="")
+  dir.create(dirname)
+  if(!big.data){
+    out     <- read.ms.output(file.ms.output=file)
+    gametes <- out$gametes
+    for(xx in 1:length(gametes)){
+      
+      d <- gametes[[xx]]
+      d <- list(matrix=d,positions=NaN)
+      samplename <- paste("ms_sample_",xx,".RD",sep="")
+      save(d,file= file.path (dirname,samplename) )
+      
+    }
+    test <- readData(dirname, SNP.DATA=F, FAST=TRUE, format="RData", big.data=big.data)
+    unlink(dirname,recursive=F)
+    return(test)
+  }# end of !big.data
+  
+  if(big.data){
+    out     <- read.big.ms.output(file)
+    gametes <- out$gametes
+    
+    for(xx in 1:length(gametes)){
+      open(gametes[[xx]])
+      d <- gametes[[xx]][,]
+      close(gametes[[xx]])
+      d <- list(matrix=d,positions=NaN)
+      samplename <- paste("ms_sample_",xx,".RD",sep="")
+      save(d,file= file.path (dirname,samplename) )
+      
+    }
+    test <- readData(dirname, SNP.DATA=F, FAST=TRUE, format="RData", big.data=big.data)
+    unlink(dirname,recursive=F)
+    return(test)
+  }}#end of big.data
+  
+  
+withErrorTracing = function(expr, silentSuccess=FALSE) {
+  hasFailed = FALSE
+  messages = list()
+  warnings = list()
+  
+  errorTracer = function(obj) {
+    
+    # Storing the call stack 
+    calls = sys.calls()
+    calls = calls[1:length(calls)-1]
+    # Keeping the calls only
+    trace = limitedLabels(c(calls, attr(obj, "calls")))
+    
+    # Printing the 2nd and 3rd traces that contain the line where the error occured
+    # This is the part you might want to edit to suit your needs
+    print(paste0("Error occuring: ", trace[length(trace):1][2:3]))
+    
+    # Muffle any redundant output of the same message
+    optionalRestart = function(r) { res = findRestart(r); if (!is.null(res)) invokeRestart(res) }
+    optionalRestart("muffleMessage")
+    optionalRestart("muffleWarning")
+  }
+  
+  vexpr = withCallingHandlers(withVisible(expr),  error=errorTracer)
+  if (silentSuccess && !hasFailed) {
+    cat(paste(warnings, collapse=""))
+  }
+  if (vexpr$visible) vexpr$value else invisible(vexpr$value)
+}
 
 # Retrieves dominance coefficients given ploidy and a single dominance scalar
 getDomCoefs = function(dom_scalar, ploidy = 100){
@@ -96,7 +249,6 @@ getTraj = function(s, dom_scalar, ploidy, start_freq, N = -9, end_freq = 0.99, m
       df = rbind(df, c(s, dom_scalar, gen, p, dp1, Den, k))
       dp1 = p_prime - p
       p = p_prime
-      cat(p)
       gen = gen + 1
     }
     df = rbind(df, c(s, dom_scalar, gen, p, dp1, Den, k))
@@ -244,9 +396,9 @@ msselCalc <- function(in_file, numWindows, samp_sizes, Nsites, outgroup = 21, sl
     DF = data.frame()
     parseInfo = function(info){
       df = as.data.frame(info)
-      df$snp.start = as.numeric(str_split_fixed(rownames(df)," ",4)[,2])
-      df$snp.end = as.numeric(str_split_fixed(str_split_fixed(rownames(df)," ",4)[,4]," ",2)[,1])
-      df$rep1 = str_split_fixed(str_split_fixed(rownames(df),"_",3)[,3], "[.]",2)[,1]
+      df$snp.start = as.numeric(str_split_fixed(rownames(df)," ",4)[,1])
+      df$snp.end = as.numeric(str_split_fixed(rownames(df)," ",4)[,3])
+      df$rep1 = 1
       return(df)
     }
     for (i in 1:length(inp@populations)){
@@ -258,6 +410,7 @@ msselCalc <- function(in_file, numWindows, samp_sizes, Nsites, outgroup = 21, sl
       df$pop = as.character(i)
       DF=rbind(DF,df)
     }
+    
     vars = c(coords, "nuc.diversity.within", linkage_stats, neutrality_stats, "pop")
     DF = melt(DF[,vars], id.vars = c(coords, "pop"))
     DF = dcast(DF, rep1 + snp.start + snp.end ~ variable + pop, value.var = "value")
@@ -287,8 +440,10 @@ msselCalc <- function(in_file, numWindows, samp_sizes, Nsites, outgroup = 21, sl
   
   # Read output of mssel simulation
   print("Reading mssel input...")
-  sim = readMS(in_file)
+  sim = readMS2(in_file)
+  print("Got polymorphism data...")
   positions = read.ms.output2(file.ms.output = in_file)
+  print("Got position data...")
   positions = positions$positions
   winSize = round(length(positions[[1]]) / numWindows, digits = -1)
   print("Done")
@@ -305,7 +460,7 @@ msselCalc <- function(in_file, numWindows, samp_sizes, Nsites, outgroup = 21, sl
   
   # Divide simulated data into windows (type=1: based on SNP counts; type=2: based on nucleotide counts)
   cat(paste("","Creating windows...", "", sep = "\n"))
-  sim.slide = sliding.window.transform(sim, width = winSize, jump = winSize * slideRate, type = 1, whole.data = FALSE)
+  sim.slide = sliding.window.transform(sim, width = winSize, jump = winSize * slideRate, type = 1, whole.data = T) #whole.data must be set to F if using the ff package (i.e. if SNP.DATA is set to T)
   cat(paste("Done", "Calculating metrics...", "", sep = "\n"))
   sim.slide = diversity.stats(sim.slide)
   sim.slide = diversity.stats.between(sim.slide)
@@ -319,10 +474,12 @@ msselCalc <- function(in_file, numWindows, samp_sizes, Nsites, outgroup = 21, sl
   df$Pi.1 = df$nuc.diversity.within_1 / df$bp.len
   df$Pi.2 = df$nuc.diversity.within_2 / df$bp.len
   df$dxy.1.2 = df[['dxy']] / df$bp.len
+  df %<>% select(-one_of(c("Var2, Var2.1"))) %>% as.data.frame()
   print("Done")
   
   return(df)
 }
+
 
 ####### End: Define Useful Functions ##########
 
@@ -334,7 +491,7 @@ params %<>% dplyr::slice(rep(row_number(), num_reps))
 
 params %<>% group_by(traj_ploidy, sim_ploidy, s, recomb, sampGen, N, mu, sampGen, dom, fuseGen) %>% mutate(rep = 1:n())
 
-if (cdf != -9){
+if (current_df != -9){
 cdf = read.table(current_df, head = T)
 
 done = cdf %>% select(s,dom, recomb, N, mu, sim_ploidy , traj_ploidy, sampGen, fuseGen, rep) %>% distinct() 
@@ -359,36 +516,90 @@ mssel_parallel = function(j) {
   fuseGen = params[j,]$fuseGen
   rep = params[j,]$rep
 
-  # Get sweep trajectory
-  new_traj = getTraj(s, dom, traj_ploidy, 0.05, N, end_freq, max_gens, num_tries)
-  
+  #Create filenames
   ms_outfile = paste(outdir, "/tp", traj_ploidy, "_sp", sim_ploidy, "_do", dom, "_se", s, "_NN", N, "_mu", mu, "_re", r, "_sG", sampGen, "_fG", fuseGen, "_rep", rep,  "_msel.out", sep = "")
   fin_outfile = paste(outdir, "/tp", traj_ploidy, "_sp", sim_ploidy, "_do", dom, "_se", s, "_NN", N, "_mu", mu, "_re", r, "_sG", sampGen, "_fG", fuseGen, "_rep", rep, "_smry.txt", sep = "")
   
-  if (new_traj == -9){
-    # print(paste("Beneficial allele was lost due to drift for", num_tries, "consecutive attempts"))
-    print(params[j,])
-  } else if (new_traj == -8){
-    # print(paste("Beneficial allele did not fix before the maximum number of generations (", max_gens, ")."))
-    print(params[j,])
-  } else {
+  # Get sweep trajectory
+  new_traj = tryCatch({
+    getTraj(s, dom, traj_ploidy, 0.05, N, end_freq, max_gens, num_tries)
+  }, 
+  warning = function(w){
+    message("Warning: getTraj")
+    message(params[j,])
+    return(NULL)
+    },
+  error = function(e){
+    message("Error: getTraj")
+    message(params[j,])
+    return(NULL)
+    })
+  if (is.data.frame(new_traj)){
+    infile = tryCatch({
     new_traj = new_traj$freq
-    
-    infile = msselRun(N = N, n = samp_num, trajectory = new_traj, outfile = ms_outfile, L = seq_len, mu = , r = , ploidy = sim_ploidy, ms = path_to_mssel, sampleGen = sampGen, fuseGen = fuseGen)
-  
-    # calculate population genetic metrics in sliding windows across simulated region
-    ndat = msselCalc(infile, numWindows = N / 50, rep(sim_ploidy * samp_num, 2), Nsites = seq_len)
-    ndat %<>% mutate(s = s, dom = dom, recomb = r, N = N, mu = mu, sim_ploidy = sim_ploidy, traj_ploidy = traj_ploidy, sampGen = sampGen, fuseGen = fuseGen, rep = rep)
-    
-    # write.table(ndat, fin_outfile, row.names = F, quote = F)
+    msselRun(N = N, n = samp_num, trajectory = new_traj, outfile = ms_outfile, L = seq_len, mu = , r = , ploidy = sim_ploidy, ms = path_to_mssel, sampleGen = sampGen, fuseGen = fuseGen)
+    }, 
+    warning = function(w){
+      message("Warning: msselRun")
+      message(params[j,])
+      return(NULL)
+    },
+    error = function(e){
+      message("Error: msselRun")
+      message(params[j,])
+      return(NULL)
+    })} else {
+      message("Trajectory failure")
+      message(params[j,])
+    }
+  # calculate population genetic metrics in sliding windows across simulated region
+  if (exists("infile") && !is.null(infile)){
+    ndat = tryCatch({
+    msselCalc(infile, numWindows = N / 50, rep(sim_ploidy * samp_num, 2), Nsites = seq_len)
+    }, 
+    error = function(e){
+      message("Error: msselCalc")
+      errorStorage <- capture.output(tryCatch({
+        withErrorTracing({msselCalc(infile, numWindows = N / 50, rep(sim_ploidy * samp_num, 2), Nsites = seq_len)})
+      }, error = function(e){
+        e <<- e
+        message("ERROR: ", e$message, "\nin ")
+        message(e$call)
+      }))
+      return(NULL)
+    })
   }
-  return(ndat)
+  
+  if (!exists("ndat", inherits=F) || is.null(ndat)){
+    ndat = params[j,]
+  } else{
+    ndat %<>% mutate(s = s, dom = dom, recomb = r, N = N, mu = mu, sim_ploidy = sim_ploidy, traj_ploidy = traj_ploidy, sampGen = sampGen, fuseGen = fuseGen, rep = rep)
+    }
+    return(ndat)
 }
 
 # Call to parallel
-dat = mclapply(1:nrow(params), FUN = mssel_parallel, mc.cores= num_cores)
 
-write.table(dat, paste(outdir, outfile), row.names=F, quote=F)
+includes <- '#include <sys/wait.h>'
+code <- 'int wstat; while (waitpid(-1, &wstat, WNOHANG) > 0) {};'
+wait <- cfunction(body=code, includes=includes, convention='.C')
+
+for (i in 1:(nrow(params)/num_cores)){
+  j = i * num_cores
+  progress = round(i/(nrow(params)/num_cores), digits = 4) * 100
+  print(paste0("Running jobs: ", j - 9, "-", j, "; (", progress, "% complete)"))
+  ndat = mclapply((j - 9):j, FUN = mssel_parallel, mc.cores = num_cores)
+  wait()
+  ndat = as.data.frame(do.call(rbind.fill, ndat))
+  if (i==1){
+    dat = ndat
+  } else {
+    dat = rbind.fill(ndat, dat)
+  }
+}
+
+write.table(dat, paste(outdir, outfile, sep = ""), row.names=F, quote=F)
+unlink(tmpdir, recursive=T)
 ####### END: simulate ########
 
 

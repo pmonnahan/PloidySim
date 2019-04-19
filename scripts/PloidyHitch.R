@@ -44,7 +44,7 @@ setwd(tmpdir)
 # registerDoParallel(cl)
 
 ##### BEGIN: Set parameter values to explore #####
-Ploidy = c(2, 4, 8)
+Ploidy = c(2, 4)
 pop_size = c(1000, 10000) # Keep this value above 100 and below 1000000 (computation time will increase with increasing pop_size)
 selection_coeff = c(0.1, 0.01) # Keep this between 0 and 1
 
@@ -515,6 +515,8 @@ mssel_parallel = function(j) {
   sampGen = params[j,]$sampGen
   fuseGen = params[j,]$fuseGen
   rep = params[j,]$rep
+  
+  start_freq = 1 / (sim_ploidy * N)
 
   #Create filenames
   ms_outfile = paste(outdir, "/tp", traj_ploidy, "_sp", sim_ploidy, "_do", dom, "_se", s, "_NN", N, "_mu", mu, "_re", r, "_sG", sampGen, "_fG", fuseGen, "_rep", rep,  "_msel.out", sep = "")
@@ -522,7 +524,7 @@ mssel_parallel = function(j) {
   
   # Get sweep trajectory
   new_traj = tryCatch({
-    getTraj(s, dom, traj_ploidy, 0.05, N, end_freq, max_gens, num_tries)
+    getTraj(s, dom, traj_ploidy, start_freq, N, end_freq, max_gens, num_tries)
   }, 
   warning = function(w){
     message("Warning: getTraj")

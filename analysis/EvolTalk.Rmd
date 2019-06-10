@@ -1,0 +1,355 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(assertthat)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(PopGenome)
+library(stringr)
+library(data.table)
+library(magrittr)
+library(wrapr)
+library(foreach)
+library(IDPmisc)
+
+map <- purrr::map
+
+ms = read.table("~/Documents/Research/PloidySim/data/mssel_out_2-24-19_fin.txt", head = T)
+
+#Group windows into larger sets
+ms %<>% mutate(driftGen = 0)
+
+ms2 = read.table("~/Documents/Research/PloidySim/data/mssel_out_highRe_drift_4-30-19.txt", head = T)
+
+#NEED TO ADD this data
+ms3 = read.table("~/Documents/Research/PloidySim/data/mssel_out_5-10-19.txt", head = T)
+ms3 %<>% filter(sim_ploidy!=1)
+
+ms = rbind(ms,ms2)
+
+ms %<>% mutate(ints = as.numeric(as.character(cut(bp.start, breaks = 50, labels = seq(1,50)))))
+ms3 %<>% mutate(ints = as.numeric(as.character(cut(bp.start, breaks = 50, labels = seq(1,50)))))
+
+ms = rbind(ms, ms3)
+
+ms %>% filter(traj_ploidy==sim_ploidy & sampGen == "1" & s == 0.01 & dom == "0.5" & N == 10000 & sim_ploidy == 2) %>% ggplot(., aes(y=Pi.1 * 100, x = mid/100000)) + geom_smooth(method="loess", size =0.5, span=0.1, se=F, color = "black", fullrange=T) + geom_hline(yintercept = 0.051, linetype="dashed") + scale_x_continuous(expand = c(0,0), breaks=c(1,5,9), limits = c(0.2,9.8)) + coord_cartesian(ylim = c(0, 0.055), xlim = c(0.2, 9.8)) + xlab("Position (100 kb)") + ylab("Diversity (%)") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+MS2.a = ms %>% group_by(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, rep, driftGen) %>% summarize(depth.pi = mean(Pi.2,na.rm=T) - min(Pi.1), min.pi = min(Pi.1, na.rm=T), max.taj = abs(min(Tajima.D_1, na.rm = T)), height.fst = max(fst, na.rm = T) - mean(fst, na.rm = T))
+
+MS2.b = ms %>% group_by(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, driftGen, rep, ints) %>% summarize(lessWind.pi = ifelse(mean(Pi.1, na.rm=T) < (mean(Pi.2, na.rm=T) / 2),1,0), lessWind.taj = ifelse(mean(Tajima.D_1, na.rm=T) < -1, 1, 0))
+
+MS2.c = MS2.b %>% group_by(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, driftGen, rep) %>% summarize(breadth.pi = sum(lessWind.pi) * 20000, breadth.taj = sum(lessWind.taj) * 20000)
+
+MS2.f = merge(MS2.a, MS2.c, by = c("s", "dom", "recomb", "N", "mu", "sim_ploidy", "traj_ploidy", "sampGen", "fuseGen", "driftGen", "rep"))
+
+MS2.f %<>% mutate(same_ploidy = ifelse(sim_ploidy==traj_ploidy, "yellow", "black"))
+
+MS2.f %>% filter(sim_ploidy == traj_ploidy & mu==1e-08 & N == 10000 & s =="0.01" & driftGen %in% c(0,1) & sampGen == 1 & dom %in% c(0.1, 0.5, 0.9)) %>% mutate(Dom = factor(case_when(dom == 0.1 ~ "Partial Recessivity", dom == 0.5 ~ "Additivity", dom == 0.9 ~ "Partial Dominance"), levels = c("Partial Recessivity", "Additivity", "Partial Dominance")), Height = (log(min.pi, 10)), Breadth = breadth.pi/100000, Depth = depth.pi) %>% select(Dom, traj_ploidy, Depth, Breadth) %>% melt(., id.var = c("Dom", "traj_ploidy")) %>% ggplot(., aes(y = value, fill = as.factor(Dom), x = as.factor(traj_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Dominance") + facet_wrap(~variable, scales = "free_y") + ylab("") + xlab("Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+#Ploidy
+MS2.f %>% filter(sim_ploidy == traj_ploidy & mu==1e-08 & N == 10000 & s =="0.01" & driftGen %in% c(0,1) & sampGen == 1 & dom %in% c(0.1, 0.5, 0.9)) %>% mutate(Dom = factor(case_when(dom == 0.1 ~ "Partial Recessivity", dom == 0.5 ~ "Additivity", dom == 0.9 ~ "Partial Dominance"), levels = c("Partial Recessivity", "Additivity", "Partial Dominance")), Height = (log(min.pi, 10)), Breadth = breadth.pi/100000, Depth = depth.pi) %>% select(Dom, traj_ploidy, Depth, Breadth, Height) %>% melt(., id.var = c("Dom", "traj_ploidy")) %>% ggplot(., aes(y = value, fill = as.factor(Dom), x = as.factor(traj_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_manual(name = "Dominance", values=wes_palette("Royal1")) + facet_wrap(~variable, scales = "free_y") + ylab("") + xlab("Ploidy") + theme_bw() + theme(axis.text.y=element_blank(), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16), axis.ticks.y = element_blank())
+
+#disentangling
+MS2.f %>% filter(mu==1e-08 & N == 10000 & s =="0.01" & driftGen %in% c(0,1) & sampGen == 1 & dom %in% c(0.5)) %>% mutate(Height = (log(min.pi, 10)), Breadth = breadth.pi/100000, Depth = depth.pi) %>% select(sim_ploidy, traj_ploidy, Depth, Breadth, Height, same_ploidy) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy")) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = same_ploidy)) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy") + scale_color_manual(guide=F, values = c("black", "red")) + facet_wrap(~variable, scales = "free_y") + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_blank(), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16), axis.ticks.y = element_blank())
+
+#drift
+MS2.f %>% filter(mu==1e-08 & N == 10000 & s =="0.01" & driftGen %in% c(0) & sampGen == 1 & dom %in% c(0.5)) %>% mutate(Height = (log(min.pi, 10)), Breadth = breadth.pi/100000, Depth = depth.pi) %>% select(sim_ploidy, traj_ploidy, driftGen, Depth, Breadth, Height, same_ploidy) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "driftGen", "same_ploidy")) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = same_ploidy)) + geom_boxplot(outlier.shape = NA) + scale_color_manual(guide=F, values = c("black", "red")) + scale_fill_discrete(name = "Trajectory Ploidy") + facet_wrap(~variable, scales = "free_y") + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_blank(), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16), axis.ticks.y = element_blank())
+
+MS2.f %>% filter(mu==1e-08 & N == 10000 & s =="0.01" & driftGen %in% c(10000) & sampGen == 1 & dom %in% c(0.5)) %>% mutate(Height = (log(min.pi, 10)), Breadth = breadth.pi/100000, Depth = depth.pi) %>% select(sim_ploidy, traj_ploidy, driftGen, Depth, Breadth, Height, same_ploidy) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "driftGen", "same_ploidy")) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = same_ploidy)) + scale_color_manual(guide=F, values = c("black", "red")) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy") + facet_wrap(~variable, scales = "free_y") + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_blank(), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16), axis.ticks.y = element_blank())
+
+#sampGen
+MS2.f %>% filter(mu==1e-08 & N == 10000 & s =="0.1" & driftGen %in% c(0,1) & sampGen == 1 & dom %in% c(0.5)) %>% mutate(Breadth = breadth.taj/100000, "Minimum Tajima's D" = depth.taj) %>% select(sim_ploidy, traj_ploidy, `Minimum Tajima's D`, Breadth, same_ploidy) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy")) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = same_ploidy)) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy") + scale_color_manual(guide=F, values = c("black", "red")) + facet_wrap(~variable, scales = "free_y") + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+MS2.f %>% filter(mu==1e-08 & N == 10000 & s =="0.1" & driftGen %in% c(0,1) & sampGen == 10000 & dom %in% c(0.5)) %>% mutate(Breadth = breadth.taj/100000, "Minimum Tajima's D" = max.taj) %>% select(sim_ploidy, traj_ploidy, `Minimum Tajima's D`, Breadth, same_ploidy) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy")) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = same_ploidy)) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy") + scale_color_manual(guide=F, values = c("black", "red")) + facet_wrap(~variable, scales = "free_y") + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+MS2.f %>% filter(sampGen!="1000" & mu==1e-08 & N == 10000 & s =="0.1" & driftGen %in% c(0,1) & dom %in% c(0.5)) %>% mutate(Breadth = breadth.taj/100000, "Minimum Tajima's D" = max.taj) %>% select(sampGen, sim_ploidy, traj_ploidy, `Minimum Tajima's D`, Breadth, same_ploidy) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy", "sampGen"))  %>% filter(variable == "Breadth") %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = same_ploidy)) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy") + scale_color_manual(guide=F, values = c("black", "red")) + facet_wrap(~sampGen) + ylab("Breadth of dip (100kb)") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+MS2.f %>% filter(sampGen!="1000" & mu==1e-08 & N == 10000 & s =="0.1" & driftGen %in% c(0,1) & dom %in% c(0.5)) %>% mutate(Breadth = breadth.taj/100000, "Minimum Tajima's D" = max.taj) %>% select(sampGen, sim_ploidy, traj_ploidy, `Minimum Tajima's D`, Breadth, same_ploidy) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy", "sampGen"))  %>% filter(variable == "Minimum Tajima's D") %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = same_ploidy)) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy") + scale_color_manual(guide=F, values = c("black", "red")) + facet_wrap(~sampGen) + ylab("Minimum Tajima's D") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+#Fst
+MS2.f %>% filter(mu==1e-08 & N == 10000 & s =="0.1" & driftGen %in% c(0,1) & sampGen == 1 & dom %in% c(0.5)) %>% mutate(Breadth = breadth.taj/100000, "Minimum Tajima's D" = max.taj, "Fst Height" = height.fst) %>% select(sim_ploidy, traj_ploidy, `Minimum Tajima's D`, Breadth, `Fst Height`, same_ploidy) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy")) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = same_ploidy)) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy") + scale_color_manual(guide=F, values = c("black", "red")) + facet_wrap(~variable, scales = "free_y") + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+getDims = function(dat, y.metric = "fst", offset = 100000){
+  # dat = data.frame("mid" = mid, "fst" = febugst)
+  peak = tryCatch({
+    peaks(dat$mid, abs(dat[y.metric])) %>% filter(x > 500000 - offset & x < 500000 + offset & w > 0) %>% filter(w == max(w)) %>% summarize(height = max(y), width = max(w))}
+    , error = function(e){
+      return(data.frame("height" = -9, "width" = -9))
+    })
+  return(peak)
+}
+
+# getDims = function(dat, y.metric = "fst", offset = 100000){
+#   # dat = data.frame("mid" = mid, "fst" = febugst)
+#   peak = tryCatch({
+#     peaks(dat$mid, abs(dat[y.metric])) %>% filter(x > 500000 - offset & x < 500000 + offset & w > 0) %>% summarize(height = median(y), width = median(w))}
+#     , error = function(e){
+#       return(data.frame("height" = -9, "width" = -9))
+#     })
+#   return(peak)
+# }
+
+ee = ms %>% filter(fuseGen==1 & driftGen %in% c(1,0,10000) & dom == 0.5 & sampGen %in% c(1,10000)) %>% nest(-c(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, rep, driftGen)) %>% mutate(height.taj = map(data, ~getDims(., y.metric = "Tajima.D_1")$height), width.taj = map(data, ~getDims(., y.metric = "Tajima.D_1")$width), height.fst = map(data, ~getDims(.)$height), width.fst = map(data, ~getDims(.)$width), height.h = map(data, ~getDims(., y.metric = "Fay.Wu.H_1")$height), width.h = map(data, ~getDims(., y.metric = "Fay.Wu.H_1")$width), height.e = map(data, ~getDims(., y.metric = "Zeng.E_1")$height), width.e = map(data, ~getDims(., y.metric = "Zeng.E_1")$width),) %>% select(-data) %>% unnest()
+
+ee %>% filter(sampGen == "1" & s == "0.01" & fuseGen=="1" & recomb == "5e-08" & dom=="0.5" & N=="10000" & driftGen == 0 & width.fst < 60000) %>% mutate("Magnitude" = height.fst, "Breadth" = width.fst / 10000, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, traj_ploidy, same_ploidy, Magnitude, Breadth) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy")) %>% mutate("Fst" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = as.factor(same_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy", labels = c("2", "4", "8")) + scale_color_manual(guide=F, values = c("black","red")) + facet_wrap(~Fst, scales = "free_y", labeller = label_both) + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+ee %>% filter(sampGen == "1" & s == "0.01" & fuseGen=="1" & recomb == "5e-08" & dom=="0.5" & N=="10000" & driftGen == 0 & width.taj < 100000) %>% mutate("Magnitude" = height.taj, "Breadth" = width.taj / 10000, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, traj_ploidy, same_ploidy, Magnitude, Breadth) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy")) %>% mutate("TajD" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = as.factor(same_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy", labels = c("2", "4", "8")) + scale_color_manual(guide=F, values = c("black","red")) + facet_wrap(~TajD, scales = "free_y", labeller = label_both) + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+ee %>% filter(sampGen == "1" & s == "0.01" & fuseGen=="1" & recomb == "5e-08" & dom=="0.5" & N=="10000" & driftGen == 0) %>% mutate("Magnitude" = height.h, "Breadth" = width.h / 10000, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, traj_ploidy, same_ploidy, Magnitude, Breadth) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy")) %>% mutate("Fay & Wu's H" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = as.factor(same_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy", labels = c("2", "4", "8")) + scale_color_manual(guide=F, values = c("black","red")) + facet_wrap(~`Fay & Wu's H`, scales = "free_y", labeller = label_both) + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+ee %>% filter(sampGen == "1" & s == "0.01" & fuseGen=="1" & recomb == "5e-08" & dom=="0.5" & N=="10000" & driftGen == 0) %>% mutate("Magnitude" = height.e, "Breadth" = width.e / 10000, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, traj_ploidy, same_ploidy, Magnitude, Breadth) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy")) %>% mutate("Zeng's E" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = as.factor(same_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy", labels = c("2", "4", "8")) + scale_color_manual(guide=F, values = c("black","red")) + facet_wrap(~`Zeng's E`, scales = "free_y", labeller = label_both) + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+
+ee %>% filter(sampGen == "10000" & s == "0.01" & fuseGen=="1" & recomb == "5e-08" & dom=="0.5" & N=="10000" & driftGen == 0 & width.fst < 60000) %>% mutate("Magnitude" = height.fst, "Breadth" = width.fst / 10000, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, traj_ploidy, same_ploidy, Magnitude, Breadth) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy")) %>% mutate("Fst" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = as.factor(same_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy", labels = c("2", "4", "8")) + scale_color_manual(guide=F, values = c("black","red")) + facet_wrap(~Fst, scales = "free_y", labeller = label_both) + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+ee %>% filter(sampGen == "10000" & s == "0.01" & fuseGen=="1" & recomb == "5e-08" & dom=="0.5" & N=="10000" & driftGen == 0 & width.taj < 100000) %>% mutate("Magnitude" = height.taj, "Breadth" = width.taj / 10000, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, traj_ploidy, same_ploidy, Magnitude, Breadth) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy")) %>% mutate("TajD" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = as.factor(same_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy", labels = c("2", "4", "8")) + scale_color_manual(guide=F, values = c("black","red")) + facet_wrap(~TajD, scales = "free_y", labeller = label_both) + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+ee %>% filter(traj_ploidy == sim_ploidy & s == "0.01" & fuseGen=="1" & recomb == "5e-08" & dom=="0.5" & N=="10000" & driftGen == 0 & width.taj < 100000) %>% mutate("Magnitude" = height.taj, "Breadth" = width.taj / 10000, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, sampGen, Magnitude, Breadth) %>% melt(., id.var = c("sim_ploidy", "sampGen")) %>% mutate("TajD" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(sampGen), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Generations since\nFixation") + ylab("") + xlab("Coalescent Ploidy") + facet_wrap(~TajD, labeller = label_both, scales = "free_y") +theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+ee %>% filter(traj_ploidy == sim_ploidy & s == "0.01" & fuseGen=="1" & recomb == "5e-08" & dom=="0.5" & N=="10000" & driftGen == 0 & width.fst < 100000) %>% mutate("Magnitude" = height.fst, "Breadth" = width.fst / 10000, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, sampGen, Magnitude, Breadth) %>% melt(., id.var = c("sim_ploidy", "sampGen")) %>% mutate("Fst" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(sampGen), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Generations since\nFixation") + ylab("") + xlab("Coalescent Ploidy") + facet_wrap(~Fst, labeller = label_both, scales = "free_y") +theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+ee %>% filter(traj_ploidy == sim_ploidy & s == "0.01" & fuseGen=="1" & recomb == "5e-08" & dom=="0.5" & N=="10000" & driftGen == 0 & width.taj < 100000) %>% mutate("Magnitude" = height.h, "Breadth" = width.h / 10000, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, sampGen, Magnitude, Breadth) %>% melt(., id.var = c("sim_ploidy", "sampGen")) %>% mutate("Fay & Wu's H" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(sampGen), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Generations since\nFixation") + ylab("") + xlab("Coalescent Ploidy") + facet_wrap(~`Fay & Wu's H`, labeller = label_both, scales = "free_y") +theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+ee %>% filter(traj_ploidy == sim_ploidy & s == "0.01" & fuseGen=="1" & recomb == "5e-08" & dom=="0.5" & N=="10000" & driftGen == 0 & width.fst < 100000) %>% mutate("Magnitude" = height.e, "Breadth" = width.e / 10000, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, sampGen, Magnitude, Breadth) %>% melt(., id.var = c("sim_ploidy", "sampGen")) %>% mutate("Zeng's E" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(sampGen), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Generations since\nFixation") + ylab("") + xlab("Coalescent Ploidy") + facet_wrap(~`Zeng's E`, labeller = label_both, scales = "free_y") +theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+
+fact.ehh = read.csv("~/Documents/Research/PloidySim/rehh/rehh_calcs_do0.5_fG1_DS_fmted.csv") 
+
+cc = fact.ehh %>% filter(!is.na(xpehh.p) & sampGen!=1000) %>% mutate(mid = POSITION) %>% nest(-c(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, rep)) %>% mutate(height.xp = map(data, ~getDims(., y.metric = "XPEHH")$height), width.xp = map(data, ~getDims(., y.metric = "XPEHH")$width), height.xp.p = map(data, ~getDims(., y.metric = "xpehh.p")$height), width.xp.p = map(data, ~getDims(., y.metric = "xpehh.p")$width)) %>% select(-data) %>% unnest()
+
+cc %>% filter(N == "10000" & s =="0.01" & sampGen == "1") %>% select(sim_ploidy, traj_ploidy, height.xp, width.xp, height.xp.p, width.xp.p) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy")) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_discrete(name = "Trajectory Ploidy") + facet_wrap(~variable, scales = "free_y") + ylab("") + xlab("Coalescent Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+
+
+fact.ehh %>% filter(s == "0.01" & recomb == "re1e-08" & dom=="0.5" & N=="10000" & sampGen == "1") %>% ggplot(.,aes(x=POSITION / 100000, y=xpehh.p, color=sim_ploidy)) + geom_smooth(method="loess", span=0.1, se = F) + scale_color_discrete(name="Trajectory\nPloidy") + facet_grid(~sim_ploidy) + xlab("Position (100 kb)") + ylab(expression("-log"[10]*"(p-value)")) + theme_bw()
+```
+
+
+```{r}
+genoFreqs = function(freqs){
+  AA = freqs ^ 2
+  Aa = 2 * freqs * (1 - freqs)
+  aa = (1 - freqs) ^ 2
+  AAAA = freqs ^ 4
+  AAAa = 4 * (freqs ^ 3) * (1 - freqs)
+  AAaa = 6 * (freqs ^ 2) * (1 - freqs) ^ 2
+  Aaaa = 4 * freqs * (1 - freqs) ^ 3
+  aaaa = (1 - freqs) ^ 4
+  dfreq = data.frame("p" = freqs, "AA" = AA, "Aa" = Aa, "aa" = aa, "Ploidy" = rep(2, length(freqs)))
+  tfreq = data.frame("p" = freqs, "AAAA" = AAAA, "AAAa" = AAAa, "AAaa" = AAaa, "Aaaa" = Aaaa, "aaaa" = aaaa, "Ploidy" = rep(4, length(freqs)))
+  DF = rbind(melt(dfreq, id.var = c("p", "Ploidy")), melt(tfreq, id.var = c("p", "Ploidy")))
+  return(DF)
+}
+
+# Calculate diploid/tetraploid genotype frequencies across entire range of allele frequency values
+freqs = genoFreqs(seq(0,1,0.01))
+
+ggplot(freqs, aes(x = p, y = value, color = as.factor(Ploidy), group = variable)) + geom_line() + scale_color_manual(name="Ploidy", values = c("#F8766D", "#00BA38")) + annotate("text", x = 0.28, y = 0.625, label="aa", color = "#F8766D", size = 6) + annotate("text", x = 0.5, y = 0.55, label="Aa", color = "#F8766D", size = 6) + annotate("text", x = 0.72, y = 0.625, label="AA", color = "#F8766D", size = 6) + annotate("text", x = 0.055, y = 0.6, label="aaaa", color = "#00BA38", size = 6) + annotate("text", x = 0.055, y = 0.365, label="Aaaa", color = "#00BA38", size = 6) + annotate("text", x = 0.5, y = 0.415, label="AAaa", color = "#00BA38", size = 6) + annotate("text", x = 0.955, y = 0.365, label="AAAa", color = "#00BA38", size = 6) + annotate("text", x = 0.955, y = 0.6, label="AAAA", color = "#00BA38", size = 6) + ylab("Genotype Frequency") + xlab("Allele Frequency") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+freqs %>% filter(Ploidy == 2) %>% ggplot(., aes(x = p, y = value, color = "#F8766D", group = variable)) + geom_line() + scale_color_manual(name="Ploidy", values = c("#F8766D"), label = "2") + annotate("text", x = 0.28, y = 0.625, label="aa", color = "#F8766D", size = 6) + annotate("text", x = 0.5, y = 0.55, label="Aa", color = "#F8766D", size = 6) + annotate("text", x = 0.72, y = 0.625, label="AA", color = "#F8766D", size = 6) + ylab("Genotype Frequency") + xlab("Allele Frequency") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+ggplot(freqs, aes(x = p, y = value, color = as.factor(Ploidy), group = variable)) + geom_line() + scale_color_manual(name="Ploidy", values = c("#F8766D", "#00BA38")) + annotate("text", x = 0.28, y = 0.625, label="aa", color = "#F8766D", size = 6) + annotate("text", x = 0.5, y = 0.55, label="Aa", color = "#F8766D", size = 6) + annotate("text", x = 0.72, y = 0.625, label="AA", color = "#F8766D", size = 6) + annotate("text", x = 0.055, y = 0.6, label="aaaa", color = "#00BA38", size = 6) + annotate("text", x = 0.055, y = 0.365, label="Aaaa", color = "#00BA38", size = 6) + annotate("text", x = 0.5, y = 0.415, label="AAaa", color = "#00BA38", size = 6) + annotate("text", x = 0.955, y = 0.365, label="AAAa", color = "#00BA38", size = 6) + annotate("text", x = 0.955, y = 0.6, label="AAAA", color = "#00BA38", size = 6) + ylab("Genotype Frequency") + xlab("Allele Frequency") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+```
+
+
+```{r}
+
+getFits = function(freqs, s, h1, h, h3){
+  df = data.frame("s" = s, "h" = h, "freq" = s, "w.bar" = 0, "var.w" = 0, "w.bar.p" = 0, "h1" = NA, "h3" = NA, "ploidy" = 2)
+  assert_that(length(h1) == length(h))
+  assert_that(length(h) == length(h3))
+  for (j in 1:length(s)){
+    for(k in 1:length(h)){
+    for (i in 1:length(freqs)){
+      p = freqs[i]
+      q = 1 - p
+      Tfits = c(1 + s[j], 1 + (s[j] * h3[k]), 1 + (s[j] * h[k]), 1 + (s[j] * h1[k]), 1) / (1 + s[j])
+      TGfreqs = c(p ^ 4, 4 * p^3 * q, 6 * p^2 * q^2, 4 * p * q^3, q ^ 4)
+      Tw.bar = sum(TGfreqs * Tfits)
+      Dfits = c(1 + s[j], 1 + (s[j] * h[k]), 1) / (1 + s[j])
+      DGfreqs = c(p ^ 2, 2 * p * q, q ^ 2)
+      Dw.bar = sum(DGfreqs * Dfits)
+      Tvar.w = sum((TGfreqs * (Tfits - Tw.bar) ^ 2) / length(TGfreqs))
+      Dvar.w = sum((DGfreqs * (Dfits - Dw.bar) ^ 2) / length(DGfreqs))
+      Dw.bar.p = (p * Dfits[1]) + (q * Dfits[2])
+      Tw.bar.p = ((p ^ 3) * Tfits[1]) + (3 * (p ^ 2) * q * Tfits[2]) + (3 * p * (q ^ 2) * Tfits[3]) + ((q ^ 3) * Tfits[4])
+      df = rbind(df, c(s[j], h[k], p, Dw.bar, Dvar.w, Dw.bar.p, NA, NA, 2))
+      df = rbind(df, c(s[j], h[k], p, Tw.bar, Tvar.w, Tw.bar.p, h1[k], h3[k], 4))
+    }
+    }
+  }
+  return(df[-1,])
+}
+
+fits = getFits(seq(0,1,0.01), 0.1, 0.25, 0.5, 0.75)
+fits = rbind(fits, getFits(seq(0,1,0.01), 0.1, 1, 1, 1))
+fits = rbind(fits, getFits(seq(0,1,0.01), 0.1, 0, 0, 0))
+
+fits %>% filter(s == 0.1) %>% ggplot(., aes(x=freq, y=var.w, linetype=as.factor(h), color=as.factor(ploidy))) + geom_line() + scale_color_manual(name="Ploidy", values = c("#F8766D", "#00BA38")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Allele Frequency") + ylab("Variance in Fitness") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+fits %>% filter(s == 0.1, h == 0.5, ploidy == 2) %>% ggplot(., aes(x=freq, y=var.w, color=as.factor(ploidy))) + geom_line() + scale_color_manual(name="Ploidy", values = c("#F8766D", "#00BA38")) + xlab("Allele Frequency") + ylab("Variance in Fitness\n") + theme_bw() + theme(axis.text.y=element_blank(), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+fits %>% filter(s == 0.1, h == 0.5) %>% ggplot(., aes(x=freq, y=var.w, color=as.factor(ploidy))) + geom_line() + scale_color_manual(name="Ploidy", values = c("#F8766D", "#00BA38")) + xlab("Allele Frequency") + ylab("Variance in Fitness\n") + theme_bw() + theme(axis.text.y=element_blank(), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+```
+
+
+```{r, echo=T,message=F}
+getDomCoefs = function(dominance, ploidy = 100){
+  if (dominance == 0){
+    coeffs = rep(0, ploidy - 1)
+  }
+  else if (dominance == 1){
+    coeffs = rep(1, ploidy - 1)
+  }
+  else {
+    dom = (1 - dominance) - 0.5
+    dom = abs((dom * 10 + sign(dom)) ^ sign(dom))
+    coeffs = (seq(1, ploidy - 1) / ploidy) ^ dom
+  }
+  return(coeffs)
+}
+
+doms = c(seq(0,1, 0.1))
+Doms = as.data.frame(sapply(doms, getDomCoefs))
+Doms = rbind(c(0,0,0,0,0,0,0), Doms, c(1,1,1,1,1,1,1))
+colnames(Doms) = doms
+Doms = cbind(Doms, data.frame("i/k"=seq(0,100) / 100))
+mDoms = melt(Doms, id.var = "i.k")
+ggplot(mDoms, aes(x = i.k, y = value, color = variable)) + geom_line() + scale_color_discrete(name = "Dominance\nScalar") + theme_bw() + xlab("i / k") + ylab("Dominance Coefficient")
+
+mDoms %>% filter(variable %in% c("0.1", "0.5", "0.9")) %>% ggplot(., aes(x = i.k, y = value, linetype = variable)) + geom_line() + scale_color_discrete(name = "Dominance", breaks = c("0.1", "0.5", "0.9"), labels = c("Partial\nRecessivity\n", "Additive\n", "Partial\nDominance")) + theme_bw() + xlab("Individual allele frequency of beneficial allele") + ylab("Dominance Coefficient")
+
+mDoms$variable = factor(mDoms$variable, levels(mDoms$variable)[c(rev(seq(1,11)))])
+ALL$Call=factor(ALL$Call,levels(ALL$Call)[c(2,1,3)])
+
+#Color
+mDoms %>% filter(variable %in% c("0.1", "0.5", "0.9")) %>% ggplot(., aes(x = i.k, y = value, color = variable)) + geom_line(size = 1.2) + scale_color_manual(name = "Dominance", breaks = c("0.9", "0.5", "0.1"), labels = c("Partial\nDominance", "Additive", "Partial\nRecessivity\n"), values = c("#E6A0C4", "#C6CDF7", "#D8A499")) + theme_bw() + xlab("Individual allele frequency of beneficial allele") + ylab("Dominance Coefficient") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+#Linetype
+mDoms %>% filter(variable %in% c("0.1", "0.5", "0.9")) %>% ggplot(., aes(x = i.k, y = value, linetype = variable)) + geom_line() + scale_linetype_manual(name = "Dominance", breaks = c("0.1", "0.5", "0.9"), labels = c("Partial\nRecessivity\n", "Additive\n", "Partial\nDominance"), values = c("dashed", "solid","dotdash")) + theme_bw() + xlab("Individual allele frequency of beneficial allele") + ylab("Dominance Coefficient") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+# Example
+
+# dominance=c(seq(0.1,0.9,0.1))
+# > dominance
+# [1] 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9
+
+# Centers around 0.5 (additivity)
+# dom = (1 - dominance) - 0.5
+# > dom
+# [1]  0.4  0.3  0.2  0.1  0.0 -0.1 -0.2 -0.3 -0.4
+
+# dom1 = abs((dom * 10 + sign(dom)) ^ sign(dom))
+# > dom1
+# [1] 5.0000000 4.0000000 3.0000000 2.0000000 1.0000000 0.5000000 0.3333333 0.2500000 0.2000000
+
+# > getDomCoefs(dominance = 0.2, ploidy = 4)
+# [1] 0.00390625 0.06250000 0.31640625
+# > getDomCoefs(dominance = 0.5, ploidy = 4)
+# [1] 0.25 0.50 0.75
+
+```
+
+```{r}
+getTraj = function(s, dom, ploidy, start_freq, N = -9, end_freq = 0.99, maxGens = 9999, maxTries = 10){
+  dom_coeffs = getDomCoefs(dom, ploidy)
+  attempts = 0
+  p = start_freq
+  k = ploidy
+  gen = 0
+  while (attempts <= maxTries & p < end_freq & gen <= maxGens){
+    df = data.frame("s" = s, "dom" = dom, "gen" = 0, "freq" = start_freq, "dp1" = 0, "w.bar" = 0, "ploidy" = ploidy)
+    p = start_freq
+    dp1 = 0
+    gen = 0
+    het_fits = 1 + dom_coeffs * s
+    fits = c(1, het_fits, 1 + s) / (1 + s)
+    while (p < end_freq & p > 0 & gen <= maxGens){
+      q = 1 - p
+      i = seq(0, k)
+      Num = sum(choose(k, i) * ((k - i) / k) * (p ^ (k - i)) * (q ^ i) * rev(fits))
+      Den = sum(choose(k, i) * (p ^ (k - i)) * (q ^ i) * rev(fits))
+      p_prime = Num / Den
+      if (N != -9){
+        p_prime = sum(rbinom(N, k, p_prime)) / (k * N) 
+      }
+      df = rbind(df, c(s, dom, gen, p, dp1, Den, k))
+      dp1 = p_prime - p
+      p = p_prime
+      gen = gen + 1
+    }
+    df = rbind(df, c(s, dom, gen, p, dp1, Den, k))
+    attempts = attempts + 1
+  }
+  if (attempts > maxTries & nrow(df) <= maxGens){
+    print(paste("Beneficial allele was lost due to drift for", maxTries, "consecutive attempts"))
+  }
+  if (nrow(df) > maxGens){
+    print(paste("Beneficial allele did not fix before the maximum number of generations (", maxGens, ")."))
+  }
+  return(df[-1,])
+}
+
+# Param set to create trajectories for
+params = data.frame("s" = rep(0.1,9), "dom" = c(rep(0.5,3), rep(0.1,3), rep(0.9,3)), "ploidy" = rep(c(2,4,8),3), "start" = rep(0.05, 9))
+
+# Create trajectories
+dat1 = foreach(i = 1:nrow(params), .combine=rbind) %do% {
+  getTraj(params[i,]$s, params[i,]$dom, params[i,]$ploidy, params[i,]$start)
+}
+
+params2 = data.frame("s" = c(rep(0.01,3), rep(0.005,3)), "dom" = c(rep(0.5,6)), "ploidy" = rep(c(2,4,8),2), "start" = rep(0.05, 6))
+
+# Create trajectories
+dat2 = foreach(i = 1:nrow(params2), .combine=rbind) %do% {
+  getTraj(params2[i,]$s, params2[i,]$dom, params2[i,]$ploidy, params2[i,]$start)
+}
+
+dat1$dom = factor(dat1$dom, levels(dat1$dom)[c(3,2,1)])
+#plot
+ggplot(dat1, aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_color_discrete(name="Ploidy") + scale_linetype_discrete(name="Dominance Scalar", labels=c("0.1", "0.5", "0.9")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency")
+
+#ALL
+dat1 %>% filter(ploidy %in% c(2, 4, 8) & dom %in% c(0.1, 0.5, 0.9)) %>% 
+ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + scale_linetype_manual(name = "Dominance", labels=c("Partial\nRecessivity\n", "Additivity", "Partial\nDominance")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+#Additive Series
+dat1 %>% filter(ploidy %in% c(2) & dom %in% c(0.5)) %>% 
+ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + scale_linetype_manual(name = "Dominance", breaks = c("0.5"), labels = c("Additive"), values = c("solid")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18)) + guides(color = guide_legend(order=1), linetype = guide_legend(order=2))
+
+dat1 %>% filter(ploidy %in% c(2, 4) & dom %in% c(0.5)) %>% 
+ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_linetype_manual(name = "Dominance", breaks = c("0.5"), labels = c("Additive"), values = c("solid")) + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18)) + guides(color = guide_legend(order=1), linetype = guide_legend(order=2)) 
+
+dat1 %>% filter(ploidy %in% c(2, 4, 8) & dom %in% c(0.5)) %>% 
+ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_linetype_manual(name = "Dominance", breaks = c("0.5"), labels = c("Additive"), values = c("solid")) + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18)) + guides(color = guide_legend(order=1), linetype = guide_legend(order=2))
+
+# Additive plus dominant
+dat1 %>% filter(ploidy %in% c(2) & dom %in% c(0.5, 0.9)) %>% 
+ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + scale_linetype_manual(name = "Dominance", breaks = c("0.5", "0.9"), labels = c("Additive", "\nPartial\nDominance"), values = c("dashed","solid")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18)) + guides(color = guide_legend(order=1), linetype = guide_legend(order=2))
+
+dat1 %>% filter(ploidy %in% c(2, 4) & dom %in% c(0.5, 0.9)) %>% 
+ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_linetype_manual(name = "Dominance", breaks = c("0.5", "0.9"), labels = c("Additive", "\nPartial\nDominance"), values = c("dashed","solid")) + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18)) + guides(color = guide_legend(order=1), linetype = guide_legend(order=2))
+
+dat1 %>% filter(ploidy %in% c(2, 4, 8) & dom %in% c(0.5, 0.9)) %>% 
+ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_linetype_manual(name = "Dominance", breaks = c("0.5", "0.9"), labels = c("Additive", "\nPartial\nDominance"), values = c("dashed","solid")) + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18)) + guides(color = guide_legend(order=1), linetype = guide_legend(order=2))
+
+# All Series
+dat1 %>% filter(ploidy %in% c(2) & dom %in% c(0.5, 0.9, 0.1)) %>% 
+ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + scale_linetype_manual(name = "Dominance", breaks = c("0.1", "0.5", "0.9"), labels = c("Partial\nRecessivity\n", "Additive", "\nPartial\nDominance"), values = c("dashed", "solid","dotdash")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18)) + guides(color = guide_legend(order=1), linetype = guide_legend(order=2))
+
+dat1 %>% filter(ploidy %in% c(2, 4) & dom %in% c(0.5, 0.9, 0.1)) %>% 
+ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_linetype_manual(name = "Dominance", breaks = c("0.1", "0.5", "0.9"), labels = c("Partial\nRecessivity\n", "Additive", "\nPartial\nDominance"), values = c("dashed", "solid","dotdash")) + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18)) + guides(color = guide_legend(order=1), linetype = guide_legend(order=2))
+
+dat1 %>% filter(ploidy %in% c(2, 4, 8) & dom %in% c(0.5, 0.9, 0.1)) %>% 
+ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_linetype_manual(name = "Dominance", breaks = c("0.1", "0.5", "0.9"), labels = c("Partial\nRecessivity\n", "Additive", "\nPartial\nDominance"), values = c("dashed", "solid","dotdash")) + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18)) + guides(color = guide_legend(order=1), linetype = guide_legend(order=2))
+```
+
+```{r}
+dat = read.table("~/Documents/Research/PloidySim/data/drift_start_freqs.txt", head = T)
+
+dat %>% filter(N == 1000) %>% mutate("Drift Generations" = ends, "Pop. Size" = N) %>% ggplot(., aes(fill = as.factor(ploidy), x = start_freq, y = ..scaled..)) + geom_density(alpha=0.5) + facet_grid(cols = vars(`Drift Generations`)) + ylab("") + xlab("Frequency") + ggtitle("Allele frequency distribution of new mutations \nsurviving after drifting for X generations") + scale_fill_discrete(name = "Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=14), plot.title = element_text(size = 18), panel.spacing = unit(2, "lines"))
+```
+

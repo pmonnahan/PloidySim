@@ -355,7 +355,7 @@ dat = foreach(i = 1:(length(files)), .combine=rbind,
             })
         }
         if (!is.null(out)){
-          out %<>% mutate(traj_ploidy = params[1], sim_ploidy = params[2], dom = params[3], s = params[4], N = params[5], mu = params[6], recomb = params[7], sampGen = params[8], fuseGen = params[9], rep = params[10])
+          out %<>% mutate(traj_ploidy = params[1], sim_ploidy = params[2], dom = params[3], s = params[4], N = params[5], mu = params[6], recomb = params[7], sampGen = params[8], fuseGen = params[9], driftGen = params[10], rep = params[11])
           # file.remove(paths)
           out
         }  

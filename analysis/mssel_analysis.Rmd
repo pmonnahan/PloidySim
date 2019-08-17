@@ -8,7 +8,7 @@ toc_depth: 3
 toc_float: true
 ---
 
-## Load packages and import data
+## Load packages and import/generate data
 ```{r setup, message=F}
 knitr::opts_chunk$set(echo = TRUE)
 library(assertthat)
@@ -23,6 +23,8 @@ library(wrapr)
 library(foreach)
 library(purrr)
 library(IDPmisc)
+library(MESS)
+library(wesanderson)
 
 ms = read.table("~/Documents/Research/PloidySim/data/mssel_out_2-24-19_fin.txt", head = T)
 
@@ -31,7 +33,6 @@ ms %<>% mutate(driftGen = 0)
 
 ms2 = read.table("~/Documents/Research/PloidySim/data/mssel_out_highRe_drift_4-30-19.txt", head = T)
 
-#NEED TO ADD this data
 ms3 = read.table("~/Documents/Research/PloidySim/data/mssel_out_5-10-19.txt", head = T)
 ms3 %<>% filter(sim_ploidy!=1)
 
@@ -52,6 +53,83 @@ ms4 = read.table("~/Documents/Research/PloidySim/data/mssel_d2_moreReps.txt", he
 ms4 %<>% mutate(rep = rep + 40)
 ms4 %<>% mutate(ints = as.numeric(as.character(cut(bp.start, breaks = 50, labels = seq(1,50)))))
 ms = rbind(ms, ms4)
+
+#Same number of sampled haplotypes.  Is reduced variance in higher ploidies due to higher haplotype sample size.
+ds = read.table("~/Documents/Research/PloidySim/data/mssel_out_DS_7-31-19.txt", head = T)
+nds = read.table("~/Documents/Research/PloidySim/data/mssel_out_nDS_7-31-19.txt", head = T)
+nds.ehh = read.csv("~/Documents/Research/PloidySim/rehh/dom/rehh_csv")
+
+ds.files = c("~/Documents/Research/PloidySim/rehh/rehh_tp2_do0.5_1krep_DS.csv", "~/Documents/Research/PloidySim/rehh/rehh_tp4_do0.5_1krep_DS.csv", "~/Documents/Research/PloidySim/rehh/rehh_tp8_do0.5_1krep_DS.csv")
+nds.files = c("~/Documents/Research/PloidySim/rehh/rehh_tp2_do0.5_1krep_nDS.csv", "~/Documents/Research/PloidySim/rehh/rehh_tp4_do0.5_1krep_nDS.csv", "~/Documents/Research/PloidySim/rehh/rehh_tp8_do0.5_1krep_nDS.csv")
+
+ds %<>% select(-start_freq) %>% mutate(DS="yes")
+nds %<>% select(-start_freq) %>% mutate(DS="no")
+ms5 = rbind(ds, nds)
+
+wrapEHH = function(files){
+  all.sum = data.frame()
+  for(i in 1:length(files)){
+    print(files[i])
+    dat = read.csv(files[i])
+    dat.sum = dat %>% mutate(traj_ploidy = as.numeric(str_replace(traj_ploidy, "tp","")), sim_ploidy = as.numeric(str_replace(sim_ploidy, "sp","")), dom = as.numeric(str_replace(dom, "do","")), s = as.numeric(str_replace(s, "se","")), N = as.numeric(str_replace(N, "NN","")), mu = as.numeric(str_replace(mu, "mu","")), recomb = as.numeric(str_replace(recomb, "re","")), sampGen = as.numeric(str_replace(sampGen, "sG","")), fuseGen = as.numeric(str_replace(fuseGen, "fG","")), rep = as.numeric(str_replace(rep, "rep", ""))) %>% filter(!is.na(xpehh.p)) %>% mutate(mid = POSITION) %>% nest(-c(sim_ploidy, rep)) %>% mutate(size.xp = map(data, ~getDims(., y.metric = "XPEHH")), size.xp.p = map(data, ~getDims(., y.metric = "xpehh.p")), med.xp = map(data, ~getStat(., "XPEHH")), med.xpp = map(data, ~log(getStat(., "xpehh.p"))), size.rsb = map(data, ~getDims(., y.metric = "Rsb")), size.rsb.p = map(data, ~getDims(., y.metric = "rsb.p")), med.rsb = map(data, ~getStat(., "Rsb")), med.rsb.p = map(data, ~log(getStat(., "rsb.p")))) %>% select(-data) %>% unnest()
+    all.sum = rbind(all.sum, dat.sum)
+    remove(dat)
+  }
+  return(all.sum)
+}
+
+ds.ehh = wrapEHH(ds.files)
+nds.ehh = wrapEHH(nds.files)
+ds.ehh %<>% mutate(DS="yes")
+nds.ehh %<>% mutate(DS="no")
+
+CV <- function(data){(sd(data, na.rm=T)/(mean(data, na.rm=T)))*100}
+
+lCV <- function(data, N = 10000, n = 100){
+    aa = foreach(i = 1:N, .combine = rbind) %do% {
+      ndat = sample(data, n)
+      sd(ndat, na.rm=T)/(mean(ndat, na.rm=T))*100}
+    return(quantile(aa,0.05, na.rm=T))
+}
+
+uCV <- function(data, N = 10000, n = 100){
+    aa = foreach(i = 1:N, .combine = rbind) %do% {
+      ndat = sample(data, n)
+      sd(ndat, na.rm=T)/(mean(ndat, na.rm=T))*100}
+    return(quantile(aa,0.95, na.rm=T))
+}
+
+ds = ms5 %>% group_by(sim_ploidy, DS, rep) %>% mutate(Div = mean(Pi.2) - Pi.1, Tajima.D_1 = abs(Tajima.D_1)) %>% ungroup() %>% nest(-c(sim_ploidy, DS, rep)) %>% mutate(size.div = map(data, ~getDims(., y.metric = "Div")), size.taj = map(data, ~getDims(., y.metric = "Tajima.D_1")), size.h = map(data, ~getDims(., y.metric = "Fay.Wu.H_1")), size.e = map(data, ~getDims(., y.metric = "Zeng.E_1")), size.fst = map(data, ~getDims(., y.metric = "fst")), size.dxy = map(data, ~getDims(., y.metric = "dxy.1.2")), med.d = map(data, ~getStat(., "Tajima.D_1")), med.e = map(data, ~getStat(., "Zeng.E_1")), med.h = map(data, ~getStat(., "Fay.Wu.H_1")), med.fst = map(data, ~getStat(., "fst")), med.dxy = map(data, ~getStat(., "dxy.1.2"))) %>% select(-data) %>% unnest()
+
+ds %>% group_by(sim_ploidy, DS) %>% select(-rep) %>% summarize_all(sd) %>% gather(variable, value, -c(sim_ploidy, DS)) %>% ggplot(aes(x = as.factor(sim_ploidy), fill = as.factor(DS), y = value)) + geom_bar(stat = "identity", position = "dodge") + facet_wrap(~variable, scales = "free_y")
+
+
+ehh = rbind(nDS.ehh, DS.ehh)
+
+ms6 = merge(ds, ehh, by = c("sim_ploidy", "DS", "rep"), all = T)
+
+ms6 %>% group_by(sim_ploidy, DS) %>% select(-rep) %>% summarize_all(CV) %>% gather(variable, value, -c(sim_ploidy, DS)) %>% ggplot(aes(x = as.factor(sim_ploidy), fill = as.factor(DS), y = value)) + geom_bar(stat = "identity", position = "dodge") + facet_wrap(~variable, scales = "free_y")
+
+ms6 %>% group_by(sim_ploidy, DS) %>% select(-rep) %>% summarize_all(CV) %>% gather(variable, value, -c(sim_ploidy, DS)) %>% ggplot(aes(x = as.factor(sim_ploidy), fill = as.factor(DS), y = value)) + geom_bar(stat = "identity", position = "dodge") + facet_wrap(~variable, scales = "free_y")
+
+ms6.1 = ms6 %>% mutate("TajD" = med.d, "FayWuH" = med.h, "ZengsE" = med.e, "Fst" = med.fst, "Dxy" = med.dxy, "XPEHH" = med.xp, "Rsb" = med.rsb) %>% select(sim_ploidy, DS, TajD, ZengsE, FayWuH, Fst, Dxy, XPEHH, Rsb) %>% melt(., id.var = c("sim_ploidy", "DS")) %>% mutate(stat = "MaxValue")
+
+ms6.2 = ms6 %>% mutate("TajD" = size.taj, "FayWuH" = size.h, "ZengsE" = size.e, "Fst" = size.fst, "Dxy" = size.dxy, "XPEHH" = size.xp, "Rsb" = size.rsb) %>% select(sim_ploidy, DS, TajD, ZengsE, FayWuH, Fst, Dxy, XPEHH, Rsb) %>% melt(., id.var = c("sim_ploidy", "DS")) %>% mutate(stat = "AUC")
+
+ms6.3 = rbind(ms6.1, ms6.2)
+
+scaleFUN <- function(x) sprintf("%.1f", x)
+
+#Not interesting
+# ms6.3 %>% filter(stat == "AUC") %>% group_by(sim_ploidy, DS, variable) %>% summarize(CV = CV(value)) %>% ggplot(., aes(y = CV, fill = as.factor(DS), x = as.factor(sim_ploidy))) + geom_bar(stat="identity", position = position_dodge()) + scale_fill_discrete(name = "Sampling", labels=c("Equal Individuals", "Equal Alleles")) + scale_y_continuous(labels=scaleFUN) + ylab("Var[AUC]") + xlab("Ploidy") + facet_wrap(~variable, scales = "free", shrink = T, nrow = 1) + theme_bw() + theme(axis.text.y=element_blank(), axis.title.y=element_text(size=16), axis.text.x=element_blank(), axis.title.x=element_blank(), legend.text = element_text(size=13), legend.title = element_text(size=14), strip.text = element_text(size=14))
+
+MS6.1 = ms6 %>% mutate("TajD" = med.d, "FayWuH" = med.h, "ZengsE" = med.e, "Fst" = med.fst, "Dxy" = med.dxy, "XPEHH" = med.xp, "Rsb" = med.rsb) %>% select(sim_ploidy, DS, TajD, ZengsE, FayWuH, Fst, Dxy, XPEHH, Rsb) %>% group_by(sim_ploidy, DS) %>% summarize_all(c("CV", "lCV", "uCV"))
+
+MS6.1 %>% melt(., id.var = c("sim_ploidy", "DS")) %>% separate(variable, c("variable","XX"), "_") %>% spread(XX, value) %>% ggplot(., aes(y = CV, fill = as.factor(DS), x = as.factor(sim_ploidy))) + geom_bar(stat="identity", position = position_dodge()) + geom_errorbar(aes(ymin = lCV, ymax = uCV, width = 0.5), position = position_dodge(width = 0.9)) + scale_fill_discrete(name = "Sampling", labels=c("Equal Individuals", "Equal Alleles")) + scale_y_continuous(labels=scaleFUN) + ylab("Var[MaxValue]") + xlab("Ploidy") + facet_wrap(~variable, scales = "free", shrink = T, nrow = 1) + theme_bw() + theme(axis.text.y=element_blank(), axis.title.y=element_text(size=16), axis.text.x=element_text(size=14), axis.title.x=element_text(size=16), legend.text = element_text(size=13), legend.title = element_text(size=14), strip.text = element_text(size=14))
+
+
+
+
 
 
 ```
@@ -91,7 +169,6 @@ ggplot(mDoms, aes(x = i.k, y = value, color = variable)) + geom_line() + scale_c
 mDoms %>% filter(variable %in% c("0.1", "0.5", "0.9")) %>% ggplot(., aes(x = i.k, y = value, linetype = variable)) + geom_line() + scale_color_discrete(name = "Dominance", breaks = c("0.1", "0.5", "0.9"), labels = c("Partial\nRecessivity\n", "Additive\n", "Partial\nDominance")) + theme_bw() + xlab("Individual allele frequency of beneficial allele") + ylab("Dominance Coefficient")
 
 mDoms$variable = factor(mDoms$variable, levels(mDoms$variable)[c(rev(seq(1,11)))])
-ALL$Call=factor(ALL$Call,levels(ALL$Call)[c(2,1,3)])
 
 #Color
 mDoms %>% filter(variable %in% c("0.1", "0.5", "0.9")) %>% ggplot(., aes(x = i.k, y = value, color = variable)) + geom_line(size = 1.2) + scale_color_manual(name = "Dominance", breaks = c("0.9", "0.5", "0.1"), labels = c("Partial\nDominance", "Additive", "Partial\nRecessivity\n"), values = c("#E6A0C4", "#C6CDF7", "#D8A499")) + theme_bw() + xlab("Individual allele frequency of beneficial allele") + ylab("Dominance Coefficient") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
@@ -172,7 +249,7 @@ params = data.frame("s" = rep(0.1,9), "dom" = c(rep(1,3), rep(0.5,3), rep(0,3)),
 
 # Create trajectories
 dat1 = foreach(i = 1:nrow(params), .combine=rbind) %do% {
-  getTraj(params[i,]$s, params[i,]$dom, params[i,]$ploidy, params[i,]$start)
+  getTraj(params[i,]$s, params[i,]$dom, params[i,]$ploidy, params[i,]$start, maxGens = 999999)
 }
 
 dat1$dom = as.factor(dat1$dom)
@@ -185,8 +262,26 @@ ggplot(dat1, aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy)
 dat1 %>% filter(ploidy %in% c(2, 4, 8) & dom %in% c(0.1, 0.5, 0.9)) %>% 
 ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + scale_linetype_manual(name = "Dominance", labels=c("Partial\nRecessivity\n", "Additivity", "Partial\nDominance")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
 
-dat1 %>% filter(ploidy %in% c(2, 4, 8) & dom %in% c(1, 0.5, 0)) %>% 
-ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + scale_linetype_manual(name = "Dominance", labels=c("Dominant", "Additive", "Recessive")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+#All together
+dat1 %>% filter(ploidy %in% c(2, 4, 8) & dom %in% c(0, 0.5, 1)) %>% ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line(size = 1.2) + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + scale_linetype_manual(name = "Dominance", labels=c("Dominant", "Additive", "Recessive"), values = c("dashed", "solid", "dotted")) + xlim(0,500) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+#Additive and non-additive apart
+dat1 %>% filter(ploidy %in% c(2, 4, 8) & dom %in% c(0.5)) %>% ggplot(., aes(x=gen, y=freq, color=as.factor(ploidy))) + geom_line(size = 1.2) + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + xlim(0,500) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=14), axis.title.y=element_text(size=16),axis.text.x=element_text(size=14),axis.title.x=element_text(size=16),legend.text = element_text(size=14), legend.title = element_text(size=16))
+
+dat1 %>% filter(ploidy %in% c(2, 4, 8) & dom %in% c(0, 1) & mod(gen,100)==0) %>% ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line(size = 1.2) + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + scale_linetype_manual(name = "Dominance", labels=c("Dominant", "Recessive"), values = c("dashed", "dotted")) + scale_x_log10() + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=14), axis.title.y=element_text(size=16),axis.text.x=element_text(size=14),axis.title.x=element_text(size=16),legend.text = element_text(size=14), legend.title = element_text(size=16))
+
+#Stochastic effect of population size on
+params = data.frame("s" = rep(0.1,12), "dom" = c(rep(0.1,4), rep(0.5,4), rep(0.9,4)), "ploidy" = rep(c(2,4), 6), "start" = rep(0.05, 12), "N" = rep(c(1000, 1000, 10000, 10000), 3))
+params %<>% dplyr::slice(rep(row_number(), 1000))
+# Create trajectories
+dat1 = foreach(i = 1:nrow(params), .combine=rbind) %do% {
+  print(params[i,])
+  dat = getTraj(params[i,]$s, params[i,]$dom, params[i,]$ploidy, params[i,]$start, N = params[i,]$N, maxGens = 9999999, maxTries = 9999999)
+  dat["N"] = params[i,]$N
+  dat[nrow(dat),]
+}
+
+dat1 %>%  mutate(Dom = factor(case_when(dom == 0.1 ~ "Partial Recessivity", dom == 0.5 ~ "Additivity", dom == 0.9 ~ "Partial Dominance"), levels = c("Partial Recessivity", "Additivity", "Partial Dominance"))) %>% ggplot(aes(y = log(gen), fill = as.factor(N), x = as.factor(ploidy))) + geom_boxplot() + facet_wrap(~Dom) + ylab("Log(Time to Fixation)") + xlab("Ploidy") + scale_fill_discrete(name = "Population Size")+ theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
 ```
 
 ## Fitness
@@ -330,9 +425,10 @@ kkk.3 = rbind(kkk.1, kkk.2)
 
 scaleFUN <- function(x) sprintf("%.1f", x)
 
-kkk.3 %>% filter(variable != "Dxy" & stat == "AUC") %>% ggplot(., aes(y = value / 100000, fill = as.factor(sampGen), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_manual(name = "Generations\nsince Fixation", values = wes_palette("Royal2")) + scale_y_continuous(labels=scaleFUN) + ylab("Area Under Curve") + xlab("Ploidy") + facet_wrap(~variable, scales = "free", shrink = T, nrow = 1) + theme_bw() + theme(axis.text.y=element_text(size = 12), axis.title.y=element_text(size=16), axis.text.x=element_blank(), axis.title.x=element_blank(), legend.text = element_text(size=13), legend.title = element_text(size=14), strip.text = element_text(size=14))
+kkk.3 %>% filter(variable %in% c("sim_ploidy", "sampGen", "TajD", "Fst", "Rsb", "XPEHH") & stat == "AUC") %>% ggplot(., aes(y = value / 100000, fill = as.factor(sampGen), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_manual(name = "Generations\nsince Fixation", values = wes_palette("Royal2")) + scale_y_continuous(labels=scaleFUN) + ylab("Area Under Curve") + xlab("Ploidy") + facet_wrap(~variable, scales = "free", shrink = T, nrow = 1) + theme_bw() + theme(axis.text.y=element_text(size = 12), axis.title.y=element_text(size=16), axis.text.x=element_blank(), axis.title.x=element_blank(), legend.text = element_text(size=13), legend.title = element_text(size=14), strip.text = element_text(size=14))
 
-kkk.3 %>% filter(variable != "Dxy" & stat == "MaxValue") %>% ggplot(., aes(y = value, fill = as.factor(sampGen), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_manual(name = "Generations\nsince Fixation", values = wes_palette("Royal2")) + scale_y_continuous(labels=scaleFUN) + ylab("Max Value") + xlab("Ploidy") + facet_wrap(~variable, scales = "free", shrink = T, nrow = 1) + theme_bw() + theme(axis.text.y=element_text(size = 12), axis.title.y=element_text(size=16), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=13), legend.title = element_text(size=14), strip.background = element_blank(), strip.text.x = element_blank())
+kkk.3 %>% filter(variable %in% c("sim_ploidy", "sampGen", "TajD", "Fst", "Rsb", "XPEHH") & stat == "MaxValue") %>% ggplot(., aes(y = value, fill = as.factor(sampGen), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_manual(name = "Generations\nsince Fixation", values = wes_palette("Royal2")) + scale_y_continuous(labels=scaleFUN) + ylab("Max Value") + xlab("Ploidy") + facet_wrap(~variable, scales = "free", shrink = T, nrow = 1) + theme_bw() + theme(axis.text.y=element_text(size = 12), axis.title.y=element_text(size=16), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=13), legend.title = element_text(size=14), strip.background = element_blank(), strip.text.x = element_blank())
+
 
 dom.rehh = read.csv("~/Documents/Research/PloidySim/rehh/dom/rehh_dom.csv")
 
@@ -346,19 +442,21 @@ ee = ms %>% filter(sampGen==1 & driftGen == 0 & fuseGen %in% c(1,1000,10000) & d
 
 kk = merge(ee, ff, by = c("traj_ploidy", "sim_ploidy", "dom", "s", "N", "mu", "recomb", "sampGen", "fuseGen", "rep"), all.x = T)
 
-kk %>% filter(dom %in% c(0.1, 0.5, 0.9) & traj_ploidy == sim_ploidy & s == "0.01" & N=="10000" & driftGen == 0 & sampGen == 1 & recomb == 1e-08 & fuseGen == 1) %>% mutate("Diversity" = size.div, "TajD" = size.taj, "FayWuH" = size.h, "ZengsE" = size.e, "Fst" = size.fst, "Dxy" = size.dxy, "XPEHH" = size.xp, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, dom, Diversity, TajD, FayWuH, ZengsE, Fst, XPEHH) %>% melt(., id.var = c("sim_ploidy", "dom")) %>% mutate("PeakSize" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value / 10000, fill = as.factor(dom), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_manual(name = "Dominance", values = wes_palette("Royal1")) + ylab("") + xlab("Ploidy") + facet_wrap(~PeakSize, scales = "free_y") +theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
-
-
-kk.points = kk %>% filter(dom %in% c("0.1", "0.5", "0.9") & traj_ploidy == sim_ploidy & s == "0.01" & recomb == "1e-08" & N=="1000" & driftGen == 0 & sampGen == 1)  %>% mutate("TajD" = size.taj, "FayWuH" = size.h, "ZengsE" = size.e, "Fst" = size.fst, "XPEHH" = size.xp, "Diversity" = size.div * 10) %>% select(sim_ploidy, dom, TajD, FayWuH, ZengsE, Fst, XPEHH, Diversity) %>% melt(., id.var = c("sim_ploidy", "dom")) %>% mutate("PeakSize" = variable) %>% filter(value != 40.5) %>% group_by(sim_ploidy, dom, variable) %>% summarize(median = median(value)) %>% mutate(PeakSize = variable)
+kk.points = kk %>% filter(dom %in% c("0.1", "0.5", "0.9") & traj_ploidy == sim_ploidy & s == "0.01" & recomb == "1e-08" & N=="1000" & driftGen == 0 & sampGen == 1)  %>% mutate("TajD" = size.taj, "FayWuH" = size.h, "ZengsE" = size.e, "Fst" = size.fst, "XPEHH" = size.xp, "Diversity" = size.div * 10) %>% select(sim_ploidy, dom, TajD, FayWuH, ZengsE, Fst, XPEHH, Diversity) %>% melt(., id.var = c("sim_ploidy", "dom")) %>% mutate("PeakSize" = variable) %>% filter(value != -9) %>% group_by(sim_ploidy, dom, variable) %>% summarize(median = median(value)) %>% mutate(PeakSize = variable)
 
 #dominance figure
 kk %>% filter(dom %in% c(0.1, 0.5, 0.9) & traj_ploidy == sim_ploidy & s == "0.01" & N=="10000" & driftGen == 0 & sampGen == 1 & recomb == 1e-08 & fuseGen == 1) %>% mutate("Diversity" = size.div, "TajD" = size.taj, "FayWuH" = size.h, "ZengsE" = size.e, "Fst" = size.fst, "Dxy" = size.dxy, "XPEHH" = size.xp, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, dom, Diversity, TajD, FayWuH, ZengsE, Fst, XPEHH) %>% melt(., id.var = c("sim_ploidy", "dom")) %>% mutate("PeakSize" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value / 10000, fill = as.factor(dom), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + geom_point(data = kk.points, aes(y = median / 10000, x = as.factor(sim_ploidy)), position = position_dodge(width = 0.8), size = 2, shape = 4) + scale_fill_manual(name = "Dominance\nScalar", values = wes_palette("Royal1"), labels = c("-0.4 (Partial\nRecessive)", "\n0 (Additive)\n", "0.4 (Partial\nDominance)")) + ylab("Peak Area") + xlab("Ploidy") + facet_wrap(~PeakSize, scales = "free_y") +theme_bw() + theme(axis.text.y=element_blank(), axis.ticks.y = element_blank(), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=16), legend.text = element_text(size=14), legend.title = element_text(size=16), strip.text = element_text(size=16))
 
 #magnitude instead
-kk %>% filter(dom %in% c(0.1, 0.5, 0.9) & traj_ploidy == sim_ploidy & s == "0.01" & N=="10000" & driftGen == 0 & sampGen == 1 & recomb == 1e-08 & fuseGen == 1) %>% mutate("TajD" = med.d, "FayWuH" = med.h, "ZengsE" = med.e, "Fst" = med.fst, "Dxy" = med.dxy, "XPEHH" = med.xp, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, dom, TajD, FayWuH, ZengsE, Fst, Dxy, XPEHH) %>% melt(., id.var = c("sim_ploidy", "dom")) %>% mutate("PeakSize" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(dom), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_manual(name = "Dominance", values = wes_palette("Royal1")) + ylab("") + xlab("Ploidy") + facet_wrap(~PeakSize, scales = "free_y") +theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+kk %>% filter(dom %in% c(0.1, 0.5, 0.9) & traj_ploidy == sim_ploidy & s == "0.01" & N=="10000" & driftGen == 0 & sampGen == 1 & recomb == 1e-08 & fuseGen == 1) %>% mutate("TajD" = med.d, "FayWuH" = med.h, "ZengsE" = med.e, "Fst" = med.fst, "Dxy" = med.dxy, "XPEHH" = med.xp, "Rsb" = med.rsb, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, dom, TajD, FayWuH, ZengsE, Fst, Dxy, XPEHH) %>% melt(., id.var = c("sim_ploidy", "dom")) %>% mutate("PeakSize" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(dom), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_manual(name = "Dominance", values = wes_palette("Royal1")) + ylab("") + xlab("Ploidy") + facet_wrap(~PeakSize, scales = "free_y") +theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
 
 #Just diversity for panel
 kk %>% filter(dom %in% c(0.1, 0.5, 0.9) & traj_ploidy == sim_ploidy & s == "0.01" & N=="10000" & driftGen == 0 & sampGen == 1 & recomb == 1e-08 & fuseGen == 1) %>% mutate("Diversity" = size.div, "TajD" = size.taj, "FayWuH" = size.h, "ZengsE" = size.e, "Fst" = size.fst, "Dxy" = size.dxy, "XPEHH" = size.xp, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, dom, Diversity) %>% melt(., id.var = c("sim_ploidy", "dom")) %>% mutate("PeakSize" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(dom), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + geom_point(data = kk.points[kk.points$variable == "Diversity",], aes(y = median, x = as.factor(sim_ploidy)), position = position_dodge(width = 0.8), size = 2, shape = 4) + scale_fill_manual(name = "Dominance\nScalar", values = wes_palette("Royal1"), labels = c("-0.4 (Recessive)", "\n0 (Additive)\n", "0.4 (Dominant)")) + ylab("Peak Area") + xlab("Ploidy") + theme_bw() + theme(axis.text.y=element_text(size = 12), axis.title.y=element_text(size=14), axis.text.x=element_text(size=12), axis.title.x=element_text(size=14), legend.text = element_text(size=12), legend.title = element_text(size=14), strip.text = element_text(size=16))
+
+#Without X's
+kk %>% filter(dom %in% c(0.1, 0.5, 0.9) & traj_ploidy == sim_ploidy & s == "0.01" & N=="10000" & driftGen == 0 & sampGen == 1 & recomb == 1e-08 & fuseGen == 1) %>% mutate("Diversity" = size.div, "TajD" = size.taj, "FayWuH" = size.h, "ZengsE" = size.e, "Fst" = size.fst, "Dxy" = size.dxy, "XPEHH" = size.xp, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, dom, Diversity) %>% melt(., id.var = c("sim_ploidy", "dom")) %>% mutate("PeakSize" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(dom), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_manual(name = "Dominance\nScalar", values = wes_palette("Royal1"), labels = c("-0.4 (Recessive)", "\n0 (Additive)\n", "0.4 (Dominant)")) + ylab("Peak Area") + xlab("Ploidy") + theme_bw() + theme(axis.text.y=element_text(size = 12), axis.title.y=element_text(size=14), axis.text.x=element_text(size=12), axis.title.x=element_text(size=14), legend.text = element_text(size=12), legend.title = element_text(size=14), strip.text = element_text(size=16))
+
+kk %>% filter(dom %in% c(0.1, 0.5, 0.9) & traj_ploidy == sim_ploidy & s == "0.01" & N=="1000" & driftGen == 0 & sampGen == 1 & recomb == 1e-08 & fuseGen == 1) %>% mutate("Diversity" = size.div, "TajD" = size.taj, "FayWuH" = size.h, "ZengsE" = size.e, "Fst" = size.fst, "Dxy" = size.dxy, "XPEHH" = size.xp, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, dom, Diversity) %>% melt(., id.var = c("sim_ploidy", "dom")) %>% mutate("PeakSize" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(dom), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + scale_fill_manual(name = "Dominance\nScalar", values = wes_palette("Royal1"), labels = c("-0.4 (Recessive)", "\n0 (Additive)\n", "0.4 (Dominant)")) + ylab("Peak Area") + xlab("Ploidy") + theme_bw() + theme(axis.text.y=element_text(size = 12), axis.title.y=element_text(size=14), axis.text.x=element_text(size=12), axis.title.x=element_text(size=14), legend.text = element_text(size=12), legend.title = element_text(size=14), strip.text = element_text(size=16))
 ```
 
 ### Breadth

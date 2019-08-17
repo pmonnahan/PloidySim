@@ -52,21 +52,27 @@ setwd(tmpdir)
 
 ##### BEGIN: Set parameter values to explore #####
 Ploidy = c(2, 4, 8)
-pop_size = c(1000, 10000) # Keep this value above 100 and below 1000000 (computation time will increase with increasing pop_size)
-selection_coeff = c(0.1, 0.01) # Keep this between 0 and 1
+pop_size = c(10000) # Keep this value above 100 and below 1000000 (computation time will increase with increasing pop_size)
+# selection_coeff = c(0.1, 0.01) # Keep this between 0 and 1
+selection_coeff = c(0.01) # Keep this between 0 and 1
 
-drift_gen = c(0, 1000, 10000)
+# drift_gen = c(0, 1000, 10000)
+drift_gen = c(0)
 
 dominance = c(0.1, 0.5, 0.9, 1, 0) #
 dominance = dominance[dom_idx]
 
 seq_len = 1000000 # Length of sequence that we will simulate with mssel.  Increasing this value will increase computation time.
 mutation_rate = c(1e-8) # per-base mutation rate; mu
-sampGen = c(1, 10000)
-fuseTime = c(1, 10000)
-samp_num = 10 # number of individuals to sample
+# sampGen = c(1, 10000)
+sampGen = c(1)
+fuseTime = c(1)
+samp_num = -9 # number of individuals to sample
+samp_alleles = 20
 max_gens = 9999
 end_freq = 0.99
+
+same_ploidy = TRUE #Set to TRUE if you want traj_ploidy == sim_ploidy
 
 ##### END: Set parameter values to explore #####
 
@@ -215,8 +221,8 @@ getDomCoefs = function(dom_scalar, ploidy = 100){
     coeffs = rep(1, ploidy - 1)
   }
   else {
-    dom = (1 - dom_scalar) - 0.5 
-    dom = abs((dom * 10 + sign(dom)) ^ sign(dom))
+    dom = 0.5 - dom_scalar # Center around additivity (0.5)
+    dom = abs((dom * 10) ^ sign(dom))
     coeffs = (seq(1, ploidy - 1) / ploidy) ^ dom
   }
   return(coeffs)
@@ -264,7 +270,7 @@ getTraj = function(s, dom_scalar, ploidy, start_freq, N = -9, end_freq = 0.99, m
 }
 
 Drift = function(N, ploidy, end, tries){
-  drift = function(N, ploidy, end, tries){
+  drift = function(N, ploidy, end){
     C = N * ploidy # # of chromosomes
     p = 0 # Current frequency
     traj = c(1/C)
@@ -284,8 +290,11 @@ Drift = function(N, ploidy, end, tries){
   tt = 1
   if(end > 0){
     traj = drift(N, ploidy, end)
+    # if (length(traj) == 0){traj = c(0)}
+    # What is happening after tt exceeds tries????  Is this getting auto set to 0? such that start_freq is 0 for selection??
     while(tt < tries & (traj[length(traj)] == 0 | traj[length(traj)] == 1)){
       traj = drift(N, ploidy, end)
+      tt = tt + 1
     }
   } else{
     traj = 1 / (N * ploidy)
@@ -320,13 +329,13 @@ msselRun = function(N, n, trajectory, outfile = -9, L = 1000000, mu = 1e-8, r = 
   theta = 2 * N * p * mu * L 
   rho = 2 * N * p * r * L
   fuse_time =  (length(trajectory) + sampleGen + fuseGen) / time_scale
-  mig_str = paste(npop, "0", n * p, n * p, "0 -ej", fuse_time, "2 1")
+  mig_str = paste(npop, "0", n, n, "0 -ej", fuse_time, "2 1")
   
   # Prepare input/output
   writeTraj(traj_file, trajectory, npop, selPop, time_scale, name, sampleGen)
   
   # Format argument strings
-  args1 = paste((2 * p * n), 1, n * p, n * p, traj_file, L * selPos, "-r", rho, L, "-t", theta, "-I", mig_str, ">", outfile)
+  args1 = paste((2 * n), 1, n, n, traj_file, L * selPos, "-r", rho, L, "-t", theta, "-I", mig_str, ">", outfile)
   
   # Run mssel
   print(paste(ms, args1))
@@ -519,6 +528,10 @@ params %<>% dplyr::slice(rep(row_number(), num_reps))
 
 params %<>% group_by(traj_ploidy, sim_ploidy, s, recomb, sampGen, N, mu, sampGen, dom, fuseGen, driftGen) %>% mutate(rep = 1:n())
 
+if (same_ploidy){
+  params %<>% filter(traj_ploidy == sim_ploidy)
+  }
+
 if (current_df != -9){
 cdf = read.table(current_df, head = T)
 
@@ -548,6 +561,7 @@ mssel_parallel = function(j) {
   rep = params[j,]$rep
   driftGen = params[j,]$driftGen
   
+  print(paste("hey", N, traj_ploidy, driftGen, num_drift_tries))
   drift_traj = Drift(N, traj_ploidy, driftGen, num_drift_tries)
   start_freq = drift_traj[length(drift_traj)]
   
@@ -575,7 +589,12 @@ mssel_parallel = function(j) {
     infile = tryCatch({
     sel_traj = sel_traj$freq
     new_traj = c(drift_traj, sel_traj[2:length(sel_traj)])
-    msselRun(N = N, n = samp_num, trajectory = new_traj, outfile = ms_outfile, L = seq_len, mu = , r = , ploidy = sim_ploidy, ms = path_to_mssel, sampleGen = sampGen, fuseGen = fuseGen)
+    if (samp_num != -9){
+      msselRun(N = N, n = samp_num * sim_ploidy, trajectory = new_traj, outfile = ms_outfile, L = seq_len, mu = mu, r = r, ploidy = sim_ploidy, ms = path_to_mssel, sampleGen = sampGen, fuseGen = fuseGen)
+    }
+    else{
+      msselRun(N = N, n = samp_alleles, trajectory = new_traj, outfile = ms_outfile, L = seq_len, mu = mu, r = r, ploidy = sim_ploidy, ms = path_to_mssel, sampleGen = sampGen, fuseGen = fuseGen)
+    }
     }, 
     warning = function(w){
       message("Warning: msselRun")
@@ -593,8 +612,13 @@ mssel_parallel = function(j) {
   # calculate population genetic metrics in sliding windows across simulated region
   if (exists("infile") && !is.null(infile)){
     ndat = tryCatch({
+      if (samp_num != -9){
     msselCalc(infile, numWindows = N / 50, rep(sim_ploidy * samp_num, 2), Nsites = seq_len)
-    }, 
+      }
+      else{
+        msselCalc(infile, numWindows = N / 50, rep(samp_alleles, 2), Nsites = seq_len)
+      }
+      }, 
     error = function(e){
       message("Error: msselCalc")
       errorStorage <- capture.output(tryCatch({
@@ -611,7 +635,7 @@ mssel_parallel = function(j) {
   if (!exists("ndat", inherits=F) || is.null(ndat)){
     ndat = params[j,]
   } else{
-    ndat %<>% mutate(s = s, dom = dom, recomb = r, N = N, mu = mu, sim_ploidy = sim_ploidy, traj_ploidy = traj_ploidy, sampGen = sampGen, fuseGen = fuseGen, driftGen = driftGen, rep = rep) %>% select(-c(Var2, Var2.1))
+    ndat %<>% mutate(s = s, dom = dom, recomb = r, N = N, mu = mu, sim_ploidy = sim_ploidy, traj_ploidy = traj_ploidy, sampGen = sampGen, fuseGen = fuseGen, driftGen = driftGen, start_freq = start_freq, rep = rep) %>% select(-c(Var2, Var2.1))
     }
     return(ndat)
 }
@@ -629,13 +653,14 @@ for (i in 1:ceiling((nrow(params)/num_cores))){
     start_idx = (i - 1) * num_cores
   } else {
     end_idx = i * num_cores
-    start_idx = end_idx - num_cores
+    start_idx = (end_idx - num_cores) + 1
   }
   
   progress = round(i/(nrow(params)/num_cores), digits = 4) * 100
   print(paste0("Running jobs: ", start_idx, "-", end_idx, "; (", progress, "% complete)"))
   ndat = mclapply(start_idx:end_idx, FUN = mssel_parallel, mc.cores = num_cores)
   wait()
+  # print(ndat)
   ndat = as.data.frame(do.call(rbind.fill, ndat))
   if (i==1){
     dat = ndat

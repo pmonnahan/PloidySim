@@ -1,0 +1,398 @@
+---
+title: "Paper_Figures"
+author: "Patrick Monnahan"
+date: "8/27/2019"
+output: html_document
+---
+
+## Load packages, import data, and define functions
+```{r setup, message=F}
+knitr::opts_chunk$set(echo = TRUE)
+library(assertthat)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(PopGenome)
+library(stringr)
+library(data.table)
+library(magrittr)
+library(wrapr)
+library(foreach)
+library(purrr)
+library(IDPmisc)
+library(MESS)
+library(wesanderson)
+
+getFits = function(s, dom, ploidy){
+  dom_coeffs = getDomCoefs(dom, ploidy)
+  k = ploidy
+  dat = foreach(i = 1:51, .combine=rbind) %do% {
+    p = seq(0,1,1/50)[i]
+    q = 1 - p
+    het_fits = 1 + dom_coeffs * s
+    fits = c(1, het_fits, 1 + s) / (1 + s)
+    i = seq(0, k)
+    freqs = choose(k, i) * (p ^ (k - i)) * (q ^ i)
+    w.bar = sum(freqs * rev(fits))
+    var.w = sum((freqs * (rev(fits) - w.bar) ^ 2) / length(freqs))
+    data.frame('s' = s, 'dom' = dom, 'ploidy' = ploidy, 'freq' = p, 'w.bar' = w.bar, 'var.w' = var.w)
+  }
+  return(dat)
+}
+
+dipTraj=function(start_freq,s,h,stop_freq){
+  h=1-h
+  p=start_freq
+  traj = c(p)
+  fits = c(1.0-s, 1.0 - h*s, 1.0)
+  while(p < stop_freq){
+    g_freqs = c((1-p)^2, 2*p*(1 - p), p^2)
+    tot_fit = sum(fits * g_freqs)
+    p_fit = (g_freqs[3] * fits[3]) + 0.5*(g_freqs[2] * fits[2])
+    p_prime = p_fit/tot_fit
+    traj = c(traj,p_prime)
+    p = p_prime
+  }
+  return(traj)
+}
+
+tetTraj=function(start_freq,s,h1,h2,h3,stop_freq){
+  h1 = 1-h1
+  h2 = 1-h2
+  h3 = 1-h3
+  p=start_freq
+  traj = c(p)
+  fits = c(1.0-s, 1.0 - h1*s, 1.0 - h2*s, 1.0 - h3*s, 1.0)
+  while(p < stop_freq){
+    g_freqs = c((1-p)^4, 4*p*(1 - p)^3, 6*p^2*(1 - p)^2, 4*p^3*(1 - p), p^4)
+    tot_fit = sum(fits * g_freqs)
+    p_fit = (g_freqs[5] * fits[5]) + 0.75*(g_freqs[4] * fits[4]) + 0.5*(g_freqs[3] * fits[3]) + 0.25*(g_freqs[2] * fits[2])
+    p_prime = p_fit/tot_fit
+    traj = c(traj,p_prime)
+    p = p_prime
+  }
+  return(traj)
+}
+
+getDomCoefs = function(dominance, ploidy = 100){
+  if (dominance == 0){
+    coeffs = rep(0, ploidy - 1)
+  }
+  else if (dominance == 1){
+    coeffs = rep(1, ploidy - 1)
+  }
+  else {
+    dom = (1 - dominance) - 0.5
+    dom = abs((dom * 10 + sign(dom)) ^ sign(dom))
+    coeffs = (seq(1, ploidy - 1) / ploidy) ^ dom
+  }
+  return(coeffs)
+}
+
+getStat = function(dat, stat, offset = 25000){
+  dat = dat %>% filter(mid > 500000 - offset & mid < 500000 + offset)
+  val = max(abs(unlist(dat[,stat])), na.rm = T)
+  return(val)
+  }
+
+getTraj = function(s, dom, ploidy, start_freq, N = -9, end_freq = 0.99, maxGens = 9999, maxTries = 10){
+  dom_coeffs = getDomCoefs(dom, ploidy)
+  attempts = 0
+  p = start_freq
+  k = ploidy
+  gen = 0
+  while (attempts <= maxTries & p < end_freq & gen <= maxGens){
+    df = data.frame("s" = s, "dom" = dom, "gen" = 0, "freq" = start_freq, "dp1" = 0, "w.bar" = 0, "ploidy" = ploidy)
+    p = start_freq
+    dp1 = 0
+    gen = 0
+    het_fits = 1 + dom_coeffs * s
+    fits = c(1, het_fits, 1 + s) / (1 + s)
+    while (p < end_freq & p > 0 & gen <= maxGens){
+      q = 1 - p
+      i = seq(0, k)
+      Num = sum(choose(k, i) * ((k - i) / k) * (p ^ (k - i)) * (q ^ i) * rev(fits))
+      Den = sum(choose(k, i) * (p ^ (k - i)) * (q ^ i) * rev(fits))
+      p_prime = Num / Den
+      if (N != -9){
+        p_prime = sum(rbinom(N, k, p_prime)) / (k * N) 
+      }
+      df = rbind(df, c(s, dom, gen, p, dp1, Den, k))
+      dp1 = p_prime - p
+      p = p_prime
+      gen = gen + 1
+    }
+    df = rbind(df, c(s, dom, gen, p, dp1, Den, k))
+    attempts = attempts + 1
+  }
+  if (attempts > maxTries & nrow(df) <= maxGens){
+    print(paste("Beneficial allele was lost due to drift for", maxTries, "consecutive attempts"))
+  }
+  if (nrow(df) > maxGens){
+    print(paste("Beneficial allele did not fix before the maximum number of generations (", maxGens, ")."))
+  }
+  return(df[-1,])
+}
+
+getDims = function(dat, y.metric = "fst", offset = 100000){
+  # dat = data.frame("mid" = mid, "fst" = febugst)
+  peak = tryCatch({
+    auc(dat$mid, unlist(abs(dat[,y.metric])), from = 500000 - offset, to = 500000 + offset)}
+    , error = function(e){
+      return(-9)
+    })
+  return(peak)
+}
+
+getUnd = function(dat, y.metric = "fst", offset = 100000){
+  # dat = data.frame("mid" = mid, "fst" = febugst)
+  dat = dat %>% filter(mid > 500000 - offset & mid < 500000 + offset)
+  dat["stat"] = dat[, y.metric]
+  val1 = nrow(dat[dat$stat == "-Inf",])
+  val2 = nrow(dat[is.na(dat$stat),])
+  return(val1+val2)
+}
+
+getUnd.h = function(dat, y.metric = "fst", offset = 100000){
+  # dat = data.frame("mid" = mid, "fst" = febugst)
+  dat = dat %>% filter(POSITION > 500000 - offset & POSITION < 500000 + offset)
+  dat["stat"] = dat[, y.metric]
+  val1 = nrow(dat[dat$stat == "-Inf",])
+  val2 = nrow(dat[is.na(dat$stat),])
+  return(val1+val2)
+}
+
+wrapEHH = function(files){
+  all.sum = data.frame()
+  for(i in 1:length(files)){
+    print(files[i])
+    dat = read.csv(files[i])
+    dat.sum = dat %>% mutate(traj_ploidy = as.numeric(str_replace(traj_ploidy, "tp","")), sim_ploidy = as.numeric(str_replace(sim_ploidy, "sp","")), dom = as.numeric(str_replace(dom, "do","")), s = as.numeric(str_replace(s, "se","")), N = as.numeric(str_replace(N, "NN","")), mu = as.numeric(str_replace(mu, "mu","")), recomb = as.numeric(str_replace(recomb, "re","")), sampGen = as.numeric(str_replace(sampGen, "sG","")), fuseGen = as.numeric(str_replace(fuseGen, "fG","")), rep = as.numeric(str_replace(rep, "rep", ""))) %>% filter(!is.na(xpehh.p)) %>% mutate(mid = POSITION) %>% nest(-c(sim_ploidy, rep)) %>% mutate(size.xp = map(data, ~getDims(., y.metric = "XPEHH")), size.xp.p = map(data, ~getDims(., y.metric = "xpehh.p")), med.xp = map(data, ~getStat(., "XPEHH")), med.xpp = map(data, ~log(getStat(., "xpehh.p"))), size.ihs = map(data, ~getDims(., y.metric = "iHS")), size.ihs.p = map(data, ~getDims(., y.metric = "ihs.p")), med.ihs = map(data, ~getStat(., "iHS")), med.ihs.p = map(data, ~log(getStat(., "ihs.p")))) %>% select(-data) %>% unnest()
+    all.sum = rbind(all.sum, dat.sum)
+    remove(dat)
+  }
+  return(all.sum)
+}
+
+CV <- function(data){
+  data = data[is.finite(data)]
+  return((sd(data, na.rm=T)/(mean(data, na.rm=T)))*100)
+  }
+
+lCV <- function(data, N = 10000, n = 100){
+    aa = foreach(i = 1:N, .combine = rbind) %do% {
+      ndat = sample(data, n)
+      sd(ndat, na.rm=T)/(mean(ndat, na.rm=T))*100}
+    return(quantile(aa,0.05, na.rm=T))
+}
+
+uCV <- function(data, N = 10000, n = 100){
+    aa = foreach(i = 1:N, .combine = rbind) %do% {
+      ndat = sample(data, n)
+      sd(ndat, na.rm=T)/(mean(ndat, na.rm=T))*100}
+    return(quantile(aa,0.95, na.rm=T))
+}
+
+#Load data
+scaleFUN <- function(x) sprintf("%.1f", x)
+
+pardir = "/Users/pmonnahan/bkup"
+ms = read.table(paste(pardir, "/Documents/Research/PloidySim/data/mssel_out_8-27-19.txt", sep = ""), head = T)
+ms %<>% mutate(ints = as.numeric(as.character(cut(bp.start, breaks = 50, labels = seq(1,50))))) # label (bin) windows into larger intervals
+
+ms2 = ms %<>% filter(DS != "-9")
+ms %<>% filter(DS == "-9")
+
+ds.ehh.files = c(paste(pardir,"/Documents/Research/PloidySim/rehh/rehh_DS.csv", sep = ""))
+nds.ehh.files = c(paste(pardir,"/Documents/Research/PloidySim/rehh/rehh_tp2_do0.5_nDS.csv", sep = ""))
+traj=read.table("/Users/pmonnahan/bkup//Documents/Research/PloidySim/data/Ploidy_Forward_Sim_results.txt",head=T, sep=",")
+rehh = read.csv("/Users/pmonnahan/bkup/Documents/Research/PloidySim/rehh/rehh_calcs_do0.5_fG1_nDS.csv")
+
+ds.ehh = wrapEHH(ds.files)
+nds.ehh = wrapEHH(nds.files)
+ds.ehh %<>% mutate(DS="yes")
+nds.ehh %<>% mutate(DS="no")
+ehh = rbind(nds.ehh, ds.ehh)
+remove(c(ds.ehh, nds.ehh))
+```
+
+
+
+
+# Background {.tabset}
+
+## Sweep trajectories; Figure 1A. 
+
+These plots show a primary motivating result for this study, in that higher ploidies show increased fixation times of sweeping beneficial alleles regardless of the dominance scenario being evaluated.
+
+```{r, echo=T,message=F}
+#Function creates trajectories
+
+# Param set to create trajectories for
+params = data.frame("s" = rep(0.1,9), "dom" = c(rep(1,3), rep(0.5,3), rep(0,3)), "ploidy" = rep(c(2,4,8),3), "start" = rep(0.05, 9))
+
+# Create trajectories
+dat1 = foreach(i = 1:nrow(params), .combine=rbind) %do% {
+  getTraj(params[i,]$s, params[i,]$dom, params[i,]$ploidy, params[i,]$start, maxGens = 999999)
+}
+
+dat1$dom = as.factor(dat1$dom)
+dat1$dom = factor(dat1$dom, levels(dat1$dom)[c(3,2,1)])
+
+#All together
+dat1 %>% filter(ploidy %in% c(2, 4, 8) & dom %in% c(0, 0.5, 1)) %>% ggplot(., aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line(size = 1.2) + scale_color_manual(name = "Ploidy", values = c("#F8766D", "#00BA38", "#619CFF")) + scale_linetype_manual(name = "Dominance", labels=c("Dominant", "Additive", "Recessive"), values = c("dashed", "solid", "dotted")) + xlim(0,500) + theme_bw() + xlab("Generation") + ylab("Allele Frequency") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+dat2 = foreach(i = 1:nrow(params), .combine=rbind) %do% {
+  getFits(params[i,]$s, params[i,]$dom, params[i,]$ploidy)
+}
+
+dat2$dom = as.factor(dat2$dom)
+dat2$dom = factor(dat2$dom, levels(dat2$dom)[c(3,2,1)])
+
+#Figure 1A right
+ggplot(dat2, aes(x=freq, y=var.w, color = as.factor(ploidy), linetype=as.factor(dom))) + geom_line(size = 0.9) + scale_color_discrete(name="Ploidy") + scale_linetype_manual(name="Dominance", labels=c("Dominant","Additive","Recessive"), values = c("dashed", "solid", "dotted")) + xlab("Allele Frequency") + ylab("Variance in Fitness\n") + theme_bw() + theme(axis.text.y=element_blank(), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+ggplot(dat2, aes(x=freq, y=w.bar, color = as.factor(ploidy), linetype=as.factor(dom))) + geom_line() + scale_color_discrete(name="Ploidy") + scale_linetype_discrete(name="Dominance", labels=c("0.1","0.5","0.9")) + xlab("Allele Frequency") + ylab("Mean Fitness") + theme_bw()
+```
+
+
+## Dominance; Figure 1B
+
+This plot shows the dominance value of each genotype (given by within individual allele frequency) as a function of the dominance scalar.  The purpose was to write a function that would take a single dominance value that could be specified for any ploidy and return a comparable set of dominance coefficients for heterozygous genotypes.
+
+```{r, echo=T,message=F}
+
+doms = c(seq(0,1, 0.1))
+Doms = as.data.frame(sapply(doms, getDomCoefs))
+Doms = rbind(c(0,0,0,0,0,0,0), Doms, c(1,1,1,1,1,1,1))
+colnames(Doms) = doms
+Doms = cbind(Doms, data.frame("i/k"=seq(0,100) / 100))
+mDoms = melt(Doms, id.var = "i.k")
+
+mDoms$variable = factor(mDoms$variable, levels(mDoms$variable)[c(rev(seq(1,11)))])
+
+mDoms %>% filter(variable %in% c("0.9", "0.6", "0.5", "0.4", "0.1")) %>% ggplot(., aes(x = i.k, y = value, color = variable)) + geom_line(size = 1.2) + scale_color_discrete(name = "Dominance\nScalar", breaks = c("0.9", "0.6", "0.5", "0.4", "0.1"), labels = c("0.4", "0.1", "0", "-0.1", "-0.4")) + theme_bw() + xlab("Individual allele frequency of beneficial allele") + ylab("Dominance Coefficient") + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+```
+
+## Stochasticity in recessive trajectories; Figure 1C
+```{r}
+bbR=data.frame(traj=dipTraj(0.05,0.1,0,0.99))
+bbR$gen=seq.int(nrow(bbR))
+aaR=data.frame(traj=tetTraj(0.05,0.1,0,0,0,0.99))
+aaR$gen=seq.int(nrow(aaR))
+
+traj %>% filter(N %in% c(1000,10000) & s == 0.01 & dom == "recessive") %>% ggplot()+geom_line(data=traj[traj$dom == "recessive" & traj$s==0.1 & traj$ploidy==4 & traj$N %in% c(1000,10000),],aes(y=freq,x=gen,group=as.factor(rep)),color="blue",alpha=0.5)+geom_line(data=traj[traj$dom == "recessive" & traj$s==0.1 & traj$ploidy==2 & traj$N %in% c(1000,10000),],aes(y=freq,x=gen,group=as.factor(rep)),color="red",alpha=0.5)+geom_line(data=bbR,aes(y=traj,x=gen), linetype="dashed")+geom_line(data=aaR,aes(y=traj,x=gen))+facet_grid(~N,scales="free_x")+xlab("Generation")+ylab("Frequency")+theme(legend.title = element_text("Ploidy"))+scale_x_log10()
+```
+
+## Effect of population size on fixation time; Figure 1D
+```{r, echo=T,message=F}
+#Stochastic effect of population size on
+params2 = data.frame("s" = rep(0.1,12), "dom" = c(rep(0.1,4), rep(0.5,4), rep(0.9,4)), "ploidy" = rep(c(2,4), 6), "start" = rep(0.05, 12), "N" = rep(c(1000, 1000, 10000, 10000), 3))
+params2 %<>% dplyr::slice(rep(row_number(), 1000))
+# Create trajectories
+dat3 = foreach(i = 1:nrow(params2), .combine=rbind) %do% {
+  print(params2[i,])
+  dat = getTraj(params2[i,]$s, params2[i,]$dom, params2[i,]$ploidy, params2[i,]$start, N = params2[i,]$N, maxGens = 9999999, maxTries = 9999999)
+  dat["N"] = params2[i,]$N
+  dat[nrow(dat),]
+}
+
+dat3 %>%  mutate(Dom = factor(case_when(dom == 0.1 ~ "Partial\nRecessivity (H = -0.4)", dom == 0.5 ~ "Additivity (H = 0)", dom == 0.9 ~ "Partial\nDominance (H = 0.4)"), levels = c("Partial\nRecessivity (H = -0.4)", "Additivity (H = 0)", "Partial\nDominance (H = 0.4)"))) %>% ggplot(aes(y = log(gen), fill = as.factor(N), x = as.factor(ploidy))) + geom_boxplot(outlier.size = 0.5) + facet_wrap(~Dom) + ylab("Log(Time to Fixation)") + xlab("Ploidy") + scale_fill_discrete(name = "N")+ theme_bw() + theme(axis.text.y=element_text(size=14), axis.title.y=element_text(size=16),axis.text.x=element_text(size=14),axis.title.x=element_text(size=16),legend.text = element_text(size=14), legend.title = element_text(size=16), strip.text = element_text(size=12))
+
+```
+
+---
+
+# mssel analysis
+
+### Variable key
+* N = Population size
+
+* s = selection coefficient; difference in fitness between alternative homozygotes
+
+* dom = dominance scalar; a single value that determines the dominance coefficients of heterozygous genotypes for an arbitrary ploidy
+
+* recomb = per-base recombination rate
+
+* mu = per-base mutation rate.  Theta is ploidy x mu x N (x sequence length which is 1Mb)
+
+* sim_ploidy = **Simulation Ploidy**; ploidy used for mssel simulation.  Value used in calculating theta above
+
+* traj_ploidy = **Trajectory Ploidy**; ploidy used to generate sweep trajectory.  see getTraj() function in PloidyHitch.R
+
+* sampGen = sampling generation; number of generations passed since selection ends (i.e. fixation of beneficial allele)
+
+* fuseGen = fuse generation; number of generations prior to start of sweep that the two populations fused.
+
+**Simulation Ploidy** and **Trajectory Ploidy** are the two focal variables.  The former refers to the ploidy value used to scale population parameters when running mssel.  For example, theta = 2(N)(mu)(sim_ploidy).  The latter refers to the ploidy used for simulating the sweep trajectory, which is subsequently passed to mssel.
+
+
+## Figure 2A.  
+```{r, echo=T,message=F}
+#Figure 2A Smoothed diversity versus position
+ms %>% filter(traj_ploidy==sim_ploidy & sampGen == "1" & dom == "0.5" & N == 10000) %>% ggplot(., aes(y=Pi.1 * 100, color = as.factor(sim_ploidy), x = mid/100000, linetype = as.factor(s))) + geom_smooth(method="loess", size = 0.9, span=0.1, se=F) + scale_x_continuous(breaks=c(1,5,9), limits = c(0.2,9.8)) + xlab("Position (100 kb)") + ylab("Diversity (%)") + scale_linetype_discrete(name="Selection\nCoefficient") + scale_color_discrete(name="Ploidy") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+```
+
+#Figure 2B
+```{r}
+MS2.a = ms %>% group_by(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, rep, driftGen) %>% summarize(depth.pi = mean(Pi.2,na.rm=T) - min(Pi.1), min.pi = min(Pi.1, na.rm=T), max.taj = abs(min(Tajima.D_1, na.rm = T)), height.fst = max(fst, na.rm = T) - mean(fst, na.rm = T))
+
+MS2.b = ms %>% group_by(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, driftGen, rep, ints) %>% summarize(lessWind.pi = ifelse(mean(Pi.1, na.rm=T) < (mean(Pi.2, na.rm=T) / 2),1,0), lessWind.taj = ifelse(mean(Tajima.D_1, na.rm=T) < -1, 1, 0))
+
+MS2.c = MS2.b %>% group_by(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, driftGen, rep) %>% summarize(breadth.pi = sum(lessWind.pi) * 20000, breadth.taj = sum(lessWind.taj) * 20000)
+
+MS2.f = merge(MS2.a, MS2.c, by = c("s", "dom", "recomb", "N", "mu", "sim_ploidy", "traj_ploidy", "sampGen", "fuseGen", "driftGen", "rep"))
+
+MS2.f %<>% mutate(same_ploidy = ifelse(sim_ploidy==traj_ploidy, "yellow", "black"))
+
+#disentangling
+MS2.f %>% filter(mu==1e-08 & N == 10000 & s =="0.01" & driftGen %in% c(0,1) & sampGen == 1 & dom %in% c(0.5)) %>% mutate(Height = (log(min.pi, 10)), Breadth = breadth.pi/10000, Magnitude = depth.pi) %>% select(sim_ploidy, traj_ploidy, Magnitude, Breadth, same_ploidy) %>% melt(., id.var = c("sim_ploidy", "traj_ploidy", "same_ploidy")) %>% ggplot(., aes(y = value, fill = as.factor(traj_ploidy), x = as.factor(sim_ploidy), color = same_ploidy)) + geom_boxplot(outlier.shape = NA) + scale_fill_manual(name = "Trajectory Ploidy", values = wes_palette("Moonrise2")) + scale_color_manual(guide=F, values = c("black", "red")) + facet_wrap(~variable, scales = "free_y") + ylab("") + xlab("\n\n") + theme_bw() + theme(axis.text.y=element_text(size = 16), axis.title.y=element_text(size=18), axis.text.x=element_text(size=16), axis.title.x=element_text(size=18), legend.text = element_text(size=16), legend.title = element_text(size=18), strip.text = element_text(size=16))
+```
+
+#Figure 2C
+```{r}
+ff = rehh %>% filter(!is.na(xpehh.p) & sampGen!=1000) %>% mutate(mid = POSITION) %>% nest(-c(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, driftGen)) %>% mutate(size.xp = map(data, ~getDims(., y.metric = "XPEHH")), size.xp.p = map(data, ~getDims(., y.metric = "xpehh.p")), med.xp = map(data, ~getStat(., "XPEHH")), med.xpp = map(data, ~log(getStat(., "xpehh.p"))), size.ihs = map(data, ~getDims(., y.metric = "iHS")), size.ihs.p = map(data, ~getDims(., y.metric = "ihs.p")), med.ihs = map(data, ~getStat(., "iHS")), med.ihs.p = map(data, ~log(getStat(., "ihs.p"))), rep = driftGen) %>% select(-c(data, driftGen)) %>% unnest()
+
+ff %<>% mutate(traj_ploidy = as.numeric(str_replace(traj_ploidy, "tp","")), sim_ploidy = as.numeric(str_replace(sim_ploidy, "sp","")), dom = as.numeric(str_replace(dom, "do","")), s = as.numeric(str_replace(s, "se","")), N = as.numeric(str_replace(N, "NN","")), mu = as.numeric(str_replace(mu, "mu","")), recomb = as.numeric(str_replace(recomb, "re","")), sampGen = as.numeric(str_replace(sampGen, "sG","")), fuseGen = as.numeric(str_replace(fuseGen, "fG","")), rep = as.numeric(str_replace(rep, "rep", "")))
+
+ee = ms %>% filter(sampGen==1 & driftGen == 0 & fuseGen %in% c(1,1000,10000) & dom %in% c(0.1, 0.5, 0.9)) %>% group_by(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, rep, driftGen) %>% mutate(Div = mean(Pi.2) - Pi.1, Tajima.D_1 = abs(Tajima.D_1)) %>% ungroup() %>% nest(-c(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, rep, driftGen)) %>% mutate(size.div = map(data, ~getDims(., y.metric = "Div")), size.taj = map(data, ~getDims(., y.metric = "Tajima.D_1")), size.h = map(data, ~getDims(., y.metric = "Fay.Wu.H_1")), size.e = map(data, ~getDims(., y.metric = "Zeng.E_1")), size.fst = map(data, ~getDims(., y.metric = "fst")), size.dxy = map(data, ~getDims(., y.metric = "dxy.1.2")), med.d = map(data, ~getStat(., "Tajima.D_1")), med.e = map(data, ~getStat(., "Zeng.E_1")), med.h = map(data, ~getStat(., "Fay.Wu.H_1")), med.fst = map(data, ~getStat(., "fst")), med.dxy = map(data, ~getStat(., "dxy.1.2"))) %>% select(-data) %>% unnest()
+
+kk = merge(ee, ff, by = c("traj_ploidy", "sim_ploidy", "dom", "s", "N", "mu", "recomb", "sampGen", "fuseGen", "rep"), all.x = T)
+
+kk.points = kk %>% filter(dom %in% c("0.1", "0.5", "0.9") & traj_ploidy == sim_ploidy & s == "0.01" & recomb == "1e-08" & N=="1000" & driftGen == 0 & sampGen == 1)  %>% mutate("TajD" = size.taj, "FayWuH" = size.h, "ZengsE" = size.e, "Fst" = size.fst, "XPEHH" = size.xp, "Diversity" = size.div * 10) %>% select(sim_ploidy, dom, TajD, FayWuH, ZengsE, Fst, XPEHH, Diversity) %>% melt(., id.var = c("sim_ploidy", "dom")) %>% mutate("PeakSize" = variable) %>% filter(value != -9) %>% group_by(sim_ploidy, dom, variable) %>% summarize(median = median(value)) %>% mutate(PeakSize = variable)
+
+#Just diversity for panel
+kk %>% filter(dom %in% c(0.1, 0.5, 0.9) & traj_ploidy == sim_ploidy & s == "0.01" & N=="10000" & driftGen == 0 & sampGen == 1 & recomb == 1e-08 & fuseGen == 1) %>% mutate("Diversity" = size.div, same_ploidy = ifelse(sim_ploidy == traj_ploidy, 1, 0)) %>% select(sim_ploidy, dom, Diversity) %>% melt(., id.var = c("sim_ploidy", "dom")) %>% mutate("PeakSize" = variable) %>% filter(value != -9) %>% ggplot(., aes(y = value, fill = as.factor(dom), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + geom_point(data = kk.points[kk.points$variable == "Diversity",], aes(y = median, x = as.factor(sim_ploidy)), position = position_dodge(width = 0.8), size = 2, shape = 4) + scale_fill_manual(name = "Dominance\nScalar", values = wes_palette("Royal1"), labels = c("-0.4 (Recessive)", "\n0 (Additive)\n", "0.4 (Dominant)")) + ylab("Peak Area") + xlab("Ploidy") + theme_bw() + theme(axis.text.y=element_text(size = 12), axis.title.y=element_text(size=14), axis.text.x=element_text(size=12), axis.title.x=element_text(size=14), legend.text = element_text(size=12), legend.title = element_text(size=14), strip.text = element_text(size=16))
+
+```
+
+#Figure 2E
+```{r}
+ds = ms2 %>% group_by(sim_ploidy, DS, rep) %>% mutate(Div = mean(Pi.2) - Pi.1, Tajima.D_1 = abs(Tajima.D_1), Fst = scale(fst)) %>% ungroup() %>% nest(-c(sim_ploidy, DS, rep)) %>% mutate(size.div = map(data, ~getDims(., y.metric = "Div")), size.taj = map(data, ~getDims(., y.metric = "Tajima.D_1")), size.h = map(data, ~getDims(., y.metric = "Fay.Wu.H_1")), size.e = map(data, ~getDims(., y.metric = "Zeng.E_1")), size.fst = map(data, ~getDims(., y.metric = "Fst")), size.dxy = map(data, ~getDims(., y.metric = "dxy.1.2")), med.d = map(data, ~getStat(., "Tajima.D_1")), med.e = map(data, ~getStat(., "Zeng.E_1")), med.h = map(data, ~getStat(., "Fay.Wu.H_1")), med.fst = map(data, ~getStat(., "Fst")), med.dxy = map(data, ~getStat(., "dxy.1.2"))) %>% select(-data) %>% unnest()
+
+ms2 = merge(ds, ehh, by = c("sim_ploidy", "DS", "rep"), all = T)
+
+MS6.1 = ms2 %>% mutate("TajD" = med.d, "FayWuH" = med.h, "ZengsE" = med.e, "Fst" = med.fst, "Dxy" = med.dxy, "XPEHH" = med.xp, "iHS" = med.ihs) %>% select(sim_ploidy, DS, TajD, ZengsE, FayWuH, Fst, Dxy, XPEHH, iHS) %>% group_by(sim_ploidy, DS) %>% summarize_all(c("CV", "lCV", "uCV"))
+
+MS6.1 %>% melt(., id.var = c("sim_ploidy", "DS")) %>% separate(variable, c("variable","XX"), "_") %>% spread(XX, value) %>% filter(variable %in% c("TajD", "Fst", "iHS", "XPEHH")) %>% mutate(Variable = factor(variable, levels=c("TajD", "Fst", "iHS", "XPEHH"))) %>% ggplot(., aes(y = CV, fill = as.factor(DS), x = as.factor(sim_ploidy))) + geom_bar(stat="identity", position = position_dodge()) + geom_errorbar(aes(ymin = lCV, ymax = uCV, width = 0.5), position = position_dodge(width = 0.9)) + scale_fill_discrete(name = "Sampling", labels=c("Equal Individuals", "Equal Alleles")) + scale_y_continuous(labels=scaleFUN) + ylab("CV[MaxValue]") + xlab("Ploidy") + facet_wrap(~Variable, scales = "free", shrink = T, nrow = 1) + theme_bw() + theme(axis.text.y=element_blank(), axis.title.y=element_text(size=16), axis.text.x=element_text(size=14), axis.title.x=element_text(size=16), legend.text = element_text(size=13), legend.title = element_text(size=14), strip.text = element_text(size=14))
+```
+
+#Figure 2D
+```{r}
+dd = ms %>% filter(sim_ploidy == traj_ploidy & fuseGen==1 & s == "0.01" & recomb == "1e-08" & N=="10000" & driftGen == 0 & sampGen %in% c(1,1000,10000)) %>% group_by(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, rep, driftGen) %>% mutate(Fst = scale(fst)) %>% ungroup() %>% nest(-c(s, dom, recomb, N, mu, sim_ploidy, traj_ploidy, sampGen, fuseGen, rep, driftGen)) %>% mutate(size.taj = map(data, ~getDims(., y.metric = "Tajima.D_1")), size.h = map(data, ~getDims(., y.metric = "Fay.Wu.H_1")), size.e = map(data, ~getDims(., y.metric = "Zeng.E_1")), size.fst = map(data, ~getDims(., y.metric = "Fst")), size.dxy = map(data, ~getDims(., y.metric = "dxy.1.2")), med.d = map(data, ~getStat(., "Tajima.D_1")), med.e = map(data, ~getStat(., "Zeng.E_1")), med.h = map(data, ~getStat(., "Fay.Wu.H_1")), med.fst = map(data, ~getStat(., "Fst")), med.dxy = map(data, ~getStat(., "dxy.1.2"))) %>% select(-data) %>% unnest() 
+
+#Combined sample gen figures
+kkk = merge(dd, ff, by = c("traj_ploidy", "sim_ploidy", "dom", "s", "N", "mu", "recomb", "sampGen", "fuseGen", "rep"), all = T)
+
+kkk.1 = kkk %>% filter(dom == 0.5 & traj_ploidy == sim_ploidy & s == "0.01" & N=="10000" & driftGen == 0 & recomb == 1e-08)  %>% mutate("TajD" = med.d, "FayWuH" = med.h, "ZengsE" = med.e, "Fst" = med.fst, "Dxy" = med.dxy, "XPEHH" = med.xp, "iHS" = med.ihs) %>% select(sim_ploidy, sampGen, TajD, ZengsE, FayWuH, Fst, Dxy, XPEHH, iHS) %>% melt(., id.var = c("sim_ploidy", "sampGen")) %>% mutate(stat = "MaxValue")
+
+kkk.med.points = kkk %>% filter(dom == 0.5 & traj_ploidy == sim_ploidy & s == "0.01" & N=="10000" & driftGen == 0 & recomb == 1e-08)  %>% mutate("TajD" = med.d, "FayWuH" = med.h, "ZengsE" = med.e, "Fst" = med.fst, "Dxy" = med.dxy, "XPEHH" = med.xp, "iHS" = med.ihs) %>% select(sim_ploidy, sampGen, TajD, ZengsE, FayWuH, Fst, Dxy, XPEHH, iHS) %>% melt(., id.var = c("sim_ploidy", "sampGen")) %>% mutate(stat = "MaxValue") %>% group_by(sim_ploidy, sampGen, variable) %>% summarize(value = median(value, na.rm=T))
+
+kkk.2 = kkk %>% filter(dom == 0.5 & traj_ploidy == sim_ploidy & s == "0.01" & N=="10000" & driftGen == 0 & recomb == 1e-08)  %>% mutate("TajD" = size.taj, "FayWuH" = size.h, "ZengsE" = size.e, "Fst" = size.fst, "Dxy" = size.dxy, "XPEHH" = size.xp, "iHS" = size.ihs) %>% select(sim_ploidy, sampGen, TajD, ZengsE, FayWuH, Fst, Dxy, XPEHH, iHS) %>% melt(., id.var = c("sim_ploidy", "sampGen")) %>% mutate(stat = "AUC")
+
+kkk.3 = rbind(kkk.1, kkk.2)
+
+#Combined AUC and MaxValue
+kkk.3 %>% filter(variable %in% c("sim_ploidy", "sampGen", "TajD", "Fst", "iHS", "XPEHH") & stat == "AUC") %>% mutate(variable = factor(variable, levels = c("TajD", "Fst", "iHS", "XPEHH"))) %>% ggplot(., aes(y = value / 100000, fill = as.factor(sampGen), x = as.factor(sim_ploidy))) + geom_boxplot(outlier.shape = NA) + geom_point(data = kkk.med.points[kkk.med.points$variable %in% c("TajD", "Fst", "iHS", "XPEHH"),], aes(y = value), shape = 4, position = position_dodge(width = 0.8)) + scale_fill_manual(name = "Generations\nsince Fixation", values = wes_palette("Royal2")) + scale_y_continuous(labels=scaleFUN) + ylab("Peak Size") + xlab("Ploidy") + facet_wrap(~variable, scales = "free", shrink = T, nrow = 1) + theme_bw() + theme(axis.text.y=element_text(size = 12), axis.title.y=element_text(size=16), axis.text.x=element_text(size=13), axis.title.x=element_text(size = 16), legend.text = element_text(size=13), legend.title = element_text(size=14), strip.text = element_text(size=14))
+```
+

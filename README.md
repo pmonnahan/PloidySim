@@ -17,6 +17,8 @@ Figures in the above citation can be created with the script **analysis/PaperFig
 
 Other useful code for visualizing the output of **PloidyHitch.R** and **calcREHH.R** can be found in **analysis/mssel_analysis.Rmd**.
 
+# Requirements
+
 There are a number of required R packages that are necessary to running the code contained in this repository.  They are:
 * *rehh*
 * *PopGenome*
@@ -33,6 +35,8 @@ There are a number of required R packages that are necessary to running the code
 * *readr* 
 
 Many of these packages may have additional dependencies that the user would need to acquire as well.
+
+*mssel* can be found in a couple of different repositories, but the version used for simulating data in the above citation can be found at https://github.com/kristinmlee/dmc
 
 ## PloidyHitch.R
 This wrapper loops over all factorial combinations of parameters (jointly specified in the command line and top of the script) and for each combination, it generates an allele frequency trajectory, runs *mssel*, and calculates basic population genetic metrics, using the R package *PopGenome*.

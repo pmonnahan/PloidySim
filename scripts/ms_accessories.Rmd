@@ -40,7 +40,11 @@ genoFreqs = function(freqs){
 freqs = genoFreqs(seq(0,1,0.01))
 
 # Plot HW genotype frequencies
-ggplot(freqs, aes(x = p, y = value, color = as.factor(Ploidy), group = variable)) + geom_line() + scale_color_manual(name="Ploidy", values = c('red','blue')) + annotate("text", x = 0.25, y = 0.625, label="aa", color = "red") + annotate("text", x = 0.5, y = 0.55, label="Aa", color = "red") + annotate("text", x = 0.75, y = 0.625, label="AA", color = "red") + annotate("text", x = 0.085, y = 0.6, label="aaaa", color = "blue") + annotate("text", x = 0.085, y = 0.365, label="Aaaa", color = "blue") + annotate("text", x = 0.5, y = 0.395, label="AAaa", color = "blue") + annotate("text", x = 0.915, y = 0.365, label="AAAa", color = "blue") + annotate("text", x = 0.915, y = 0.6, label="AAAA", color = "blue") + ylab("Genotype Frequency") + xlab("Allele Frequency") + theme_bw()
+ggplot(freqs, aes(x = p, y = value, color = as.factor(Ploidy), group = variable)) + geom_line() + scale_color_manual(name="Ploidy", values = c("#F8766D", "#00BA38")) + annotate("text", x = 0.28, y = 0.625, label="aa", color = "#F8766D", size = 6) + annotate("text", x = 0.5, y = 0.55, label="Aa", color = "#F8766D", size = 6) + annotate("text", x = 0.72, y = 0.625, label="AA", color = "#F8766D", size = 6) + annotate("text", x = 0.055, y = 0.6, label="aaaa", color = "#00BA38", size = 6) + annotate("text", x = 0.055, y = 0.365, label="Aaaa", color = "#00BA38", size = 6) + annotate("text", x = 0.5, y = 0.415, label="AAaa", color = "#00BA38", size = 6) + annotate("text", x = 0.955, y = 0.365, label="AAAa", color = "#00BA38", size = 6) + annotate("text", x = 0.955, y = 0.6, label="AAAA", color = "#00BA38", size = 6) + ylab("Genotype Frequency") + xlab("Allele Frequency") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+freqs %>% filter(Ploidy == 2) %>% ggplot(., aes(x = p, y = value, color = "#F8766D", group = variable)) + geom_line() + scale_color_manual(name="Ploidy", values = c("#F8766D"), label = "2") + annotate("text", x = 0.28, y = 0.625, label="aa", color = "#F8766D", size = 6) + annotate("text", x = 0.5, y = 0.55, label="Aa", color = "#F8766D", size = 6) + annotate("text", x = 0.72, y = 0.625, label="AA", color = "#F8766D", size = 6) + ylab("Genotype Frequency") + xlab("Allele Frequency") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
+
+ggplot(freqs, aes(x = p, y = value, color = as.factor(Ploidy), group = variable)) + geom_line() + scale_color_manual(name="Ploidy", values = c("#F8766D", "#00BA38")) + annotate("text", x = 0.28, y = 0.625, label="aa", color = "#F8766D", size = 6) + annotate("text", x = 0.5, y = 0.55, label="Aa", color = "#F8766D", size = 6) + annotate("text", x = 0.72, y = 0.625, label="AA", color = "#F8766D", size = 6) + annotate("text", x = 0.055, y = 0.6, label="aaaa", color = "#00BA38", size = 6) + annotate("text", x = 0.055, y = 0.365, label="Aaaa", color = "#00BA38", size = 6) + annotate("text", x = 0.5, y = 0.415, label="AAaa", color = "#00BA38", size = 6) + annotate("text", x = 0.955, y = 0.365, label="AAAa", color = "#00BA38", size = 6) + annotate("text", x = 0.955, y = 0.6, label="AAAA", color = "#00BA38", size = 6) + ylab("Genotype Frequency") + xlab("Allele Frequency") + theme_bw() + theme(axis.text.y=element_text(size=16), axis.title.y=element_text(size=18),axis.text.x=element_text(size=16),axis.title.x=element_text(size=18),legend.text = element_text(size=16), legend.title = element_text(size=18))
 ```
 
 Allele frequency trajectories plot (dips and tets)
@@ -51,6 +55,7 @@ getTraj = function(s, dom, ploidy, start_freq, N = -9, end_freq = 0.99, maxGens 
   attempts = 0
   p = start_freq
   k = ploidy
+  gen = 0
   while (attempts <= maxTries & p < end_freq & gen <= maxGens){
     df = data.frame("s" = s, "dom" = dom, "gen" = 0, "freq" = start_freq, "dp1" = 0, "w.bar" = 0, "ploidy" = ploidy)
     p = start_freq
@@ -97,7 +102,13 @@ ggplot(traj, aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy)
 
 Allele frequency trajectories for additive allele with arbitrary ploidy
 ```{r}
+params = data.frame("s" = rep(0.1,9), "dom" = c(rep(0.5,3), rep(0.1,3), rep(0.9,3)), "ploidy" = rep(c(2,4,8),3), "start" = rep(0.05, 9))
 
+dat = foreach(i = 1:nrow(params), .combine=rbind) %do% {
+  getTraj(params[i,]$s, params[i,]$dom, params[i,]$ploidy, params[i,]$start)
+}
+
+ggplot(traj, aes(x=gen, y=freq, linetype=as.factor(dom), color=as.factor(ploidy))) + geom_line() + scale_color_manual(name="Ploidy",values=c('red','blue')) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlim(0,300) + theme_bw() + xlab("Generation") + ylab("Allele Frequency")
 ```
 
 
@@ -191,6 +202,12 @@ ggplot(traj[traj$s==0.1,], aes(x=gen, y=var.w, linetype=as.factor(h1), color=plo
 ggplot(traj[traj$s==0.1,], aes(x=gen, y=w.bar, linetype=as.factor(h1), color=ploidy)) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Generation") + ylab("Mean Fitness") + theme_bw() + scale_x_log10()
 
 ggplot(traj[traj$s==0.1,], aes(x=gen, y=freq, linetype=as.factor(s), color=ploidy)) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + ylab("Allele Frequency") + xlab("Generation") + theme_bw() 
+
+fits = getFits(seq(0,1,0.01), 0.1, 0.25, 0.5, 0.75)
+fits = rbind(fits, getFits(seq(0,1,0.01), 0.1, 1, 1, 1))
+fits = rbind(fits, getFits(seq(0,1,0.01), 0.1, 0, 0, 0))
+
+
 
 ggplot(fits[fits$s==0.1,], aes(x=freq, y=var.w, color = as.factor(ploidy), linetype=as.factor(h1))) + geom_line() + scale_color_manual(name="Ploidy",values=c("red","blue")) + scale_linetype_discrete(name="Dominance", labels=c("Recessive","Additive","Dominant")) + xlab("Allele Frequency") + ylab("Variance in Fitness") + theme_bw()
 

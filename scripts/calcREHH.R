@@ -14,7 +14,7 @@ args = commandArgs(trailingOnly=TRUE)
 
 ms_outdir_path = args[1]
 outfile = args[2]
-downsample = 20
+downsample = -9
 files <- list.files(path = ms_outdir_path, pattern = "*.out", full.names=TRUE, recursive=FALSE)
 
 num_cores=4
@@ -229,6 +229,7 @@ RE.input = function(ms_file, num_chrom, jit_amt = 1){
   bb = read_lines(ms_file)
   aa = bb %>% parse_ms()
   haps = as.numeric(str_split(bb[1]," ")[[1]][2])
+  if (num_chrom==-9){num_chrom = haps/2}
   # L = as.numeric(str_split(bb[1]," ")[[1]][10])
   L=1000000
   hap_file1 = str_replace(ms_file,"[.]out",".hap1") #hap_file population 1
@@ -243,15 +244,17 @@ RE.input = function(ms_file, num_chrom, jit_amt = 1){
 }
 
 calcHAP = function(HapPaths){
-  invisible(capture.output(hh1 <- data2haplohh(HapPaths[1], HapPaths[3]))) #Import data
-  invisible(capture.output(hh2 <- data2haplohh(HapPaths[2], HapPaths[3])))
+  invisible(capture.output(hh1 <- data2haplohh(HapPaths[1], HapPaths[3], remove_multiple_markers = T))) #Import data
+  invisible(capture.output(hh2 <- data2haplohh(HapPaths[2], HapPaths[3], remove_multiple_markers = T)))
   ss1 = scan_hh(hh1) #Calc iHH and iES
   ss2 = scan_hh(hh2)
   
-  rsb = ies2rsb(ss1,ss2) #These are cross population haplotype estimates of selective sweep
+  rsb = ihh2ihs(ss1, freqbin = 0.1, min_maf = 0)
+  rsb = rsb$ihs
+  # rsb = ies2rsb(ss1,ss2) #These are cross population haplotype estimates of selective sweep
   xp.ehh = ies2xpehh(ss1,ss2)
   
-  colnames(rsb)[4] = "rsb.p"
+  colnames(rsb)[4] = "ihs.p"
   colnames(xp.ehh)[4] = "xpehh.p"
   HAP = merge(rsb, xp.ehh, by=c("CHR","POSITION"))
   return(HAP)
@@ -350,7 +353,7 @@ dat = foreach(i = 1:(length(files)), .combine=rbind,
             },
             error = function(e){
               message("Error: calcHAP")
-              message(paths[3])
+              message(paths)
               return(NULL)
             })
         }

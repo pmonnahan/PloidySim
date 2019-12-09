@@ -4,12 +4,12 @@ import argparse
 import numpy
 import copy
 
-def initialize(size, ploidy, freq):
-    pop = [[] for x in range(0, size)]
+def initialize(size, ploidy, freq): 
+    pop = [[] for x in range(0, size)] #Each individual is a list of alleles (0 or 1) and the population is a list of lists.
     for i, ind in enumerate(pop):
         for k in range(0,ploidy):
             rx = random.random()
-            if rx < freq:
+            if rx < freq: # Draw alleles for each individual based on starting frequency
                 pop[i].append(1)
             else:
                 pop[i].append(0)
@@ -19,18 +19,18 @@ def drift(pop, numGens):
     popSize = len(pop)
     p = calcFreq(pop) 
     F = []
-    for i in range(0,numGens):
+    for i in range(0,numGens): #Simulate drift for specified number of generations
         if p > 0 and p < 1:
-            newpop = []
+            newpop = [] #Store individuals for next generation's population as they are created
             for j in range(0, popSize):
-                p1 = copy.deepcopy(random.choice(pop))
-                p2 = copy.deepcopy(random.choice(pop))
+                p1 = copy.deepcopy(random.choice(pop)) #Parent 1 is a random individual drawn from population
+                p2 = copy.deepcopy(random.choice(pop)) #Parent 2
 
-                g1 = [p1.pop() for x in range(0, int(len(p1)/2))]
-                g2 = [p2.pop() for x in range(0, int(len(p2)/2))]
+                g1 = [p1.pop() for x in range(0, int(len(p1)/2))] #Gamete1. Randomly sample alleles without replacement from Parent1
+                g2 = [p2.pop() for x in range(0, int(len(p2)/2))] #Gamete2
 
-                o1 = g1 + g2
-                newpop.append(o1)
+                o1 = g1 + g2 #New individual is sum of gamete lists
+                newpop.append(o1) #Add new individual to next generations' population
             p = calcFreq(newpop)
             F.append(p)
 
@@ -43,8 +43,8 @@ def calcFreq(pop):
     M = 0
     T = 0
     for ind in pop:
-        M += sum(ind)
-        T += len(ind)
+        M += sum(ind) #Tracks number of mutant (1) alleles in the population
+        T += len(ind) #Tracks total alleles
     if T != 0: p = M / T
     else: p = 0
     return(p)
@@ -69,7 +69,7 @@ if __name__ == "__main__":
 
     for k in [2, 4, 8]:
         freq_diffs = []
-        varps = []
+        varps = [] 
         for rep in range(0, reps):
             pop = initialize(N, k, start_freq)
             start_freq = calcFreq(pop)
@@ -78,9 +78,9 @@ if __name__ == "__main__":
                 end_freq = calcFreq(newpop)
                 freq_diffs.append(abs(start_freq - end_freq))
 
-                dp = [x - y for x, y in zip(traj, traj[1:])] #Delta P's
+                dp = [x - y for x, y in zip(traj, traj[1:])] #Calculate Delta p in each generation based on drift trajectory
                 if numpy.var(dp) != "nan":
-                    print(f"{N} {k} {start_freq} {rep} {t} {numpy.var(dp)}")
+                    print(f"{N} {k} {start_freq} {rep} {t} {numpy.var(dp)}") #Drift rate is measured as variance in allele frequency change in each generation
                     varps.append(numpy.var(dp))
 
 

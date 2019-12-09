@@ -29,11 +29,11 @@ outdir = args[1]
 outfile = args[2]
 path_to_mssel = args[3]
 dom_idx = as.numeric(args[4])
-num_tries = as.numeric(args[5])
+num_tries = as.numeric(args[5]) # Number of attempts to simulate the allele frequency trajectory.  If end_freq is not reached within max_gens, then another 'try' is made.
 current_df = args[6] # file containing data of most current df of results.  used to keep track of how many reps we've done of each param set
 recomb_rate = as.numeric(args[7]) # per-base recombination rate; r
 num_reps = as.numeric(args[8])
-num_drift_tries = as.numeric(args[9])
+num_drift_tries = 10000
 num_cores = detectCores() - 1
 
 #make tmpdir
@@ -44,17 +44,11 @@ setwd(tmpdir)
 # cl <- makeCluster(num_cores) # Do we need to leave one core to handle the results that are being returned??
 # registerDoParallel(cl)
 
-
-
-#####
-#WRITE OUT DATA PERIODICALLY SO YOU DON'T KEEP LOSING ALL DATA FROM TIMEOUTS
-#Also add a percent complete to output to see how far you are getting.
-
 ##### BEGIN: Set parameter values to explore #####
 Ploidy = c(2, 4, 8)
-pop_size = c(10000) # Keep this value above 100 and below 1000000 (computation time will increase with increasing pop_size)
+pop_size = c(1000, 10000) # Keep this value above 100 and below 1000000 (computation time will increase with increasing pop_size)
 # selection_coeff = c(0.1, 0.01) # Keep this between 0 and 1
-selection_coeff = c(0.01) # Keep this between 0 and 1
+selection_coeff = c(0.1, 0.01) # Keep this between 0 and 1
 
 # drift_gen = c(0, 1000, 10000)
 drift_gen = c(0)
@@ -64,12 +58,11 @@ dominance = dominance[dom_idx]
 
 seq_len = 1000000 # Length of sequence that we will simulate with mssel.  Increasing this value will increase computation time.
 mutation_rate = c(1e-8) # per-base mutation rate; mu
-# sampGen = c(1, 10000)
-sampGen = c(1)
-fuseTime = c(1)
-samp_num = -9 # number of individuals to sample
+sampGen = c(1, 1000, 10000)
+fuseTime = c(1, 1000, 10000)
+samp_num = as.numeric(args[9]) # number of individuals to sample
 samp_alleles = 20
-max_gens = 9999
+max_gens = 99999 # Number of generations to allow for simulation of allele frequency trajectory.  If end_freq is not reached before this point, then simulation is aborted.
 end_freq = 0.99
 
 same_ploidy = TRUE #Set to TRUE if you want traj_ploidy == sim_ploidy
@@ -664,16 +657,20 @@ for (i in 1:ceiling((nrow(params)/num_cores))){
   ndat = as.data.frame(do.call(rbind.fill, ndat))
   if (i==1){
     dat = ndat
+    Dat = ndat
   } else if (i %% 100){
     write.table(dat, paste(outdir, outfile, "prm", i, ".txt", sep = ""), row.names=F, quote=F)
     dat = ndat
+    Dat = rbind.fill(ndat, Dat)
   } else{
     dat = rbind.fill(ndat, dat)
+    Dat = rbind.fill(ndat, Dat)
   }
 }
 
 
-write.table(dat, paste(outdir, outfile, ".txt", sep = ""), row.names=F, quote=F)
+write.table(dat, paste(outdir, outfile, "prm_fin", ".txt", sep = ""), row.names=F, quote=F)
+write.table(Dat, paste(outdir, outfile, ".txt", sep = ""), row.names=F, quote=F)
 unlink(tmpdir, recursive=T)
 ####### END: simulate ########
 
